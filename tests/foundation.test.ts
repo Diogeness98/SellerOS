@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { canAccessWorkspace, canManageWorkspace, createSession, createSessionToken, hashPassword, isSessionValid, readSessionToken, verifyPassword } from '../shared/auth'
+import { handleRequest } from '../worker/api'
+import type { Env } from '../worker/types'
 
 describe('auth foundation', () => {
   it('creates a time-limited session', () => {
@@ -54,5 +56,15 @@ describe('auth foundation', () => {
     const session = createSession('user-1', 'workspace-a', 'OWNER', new Date('2026-01-01T00:00:00.000Z'))
     const token = await createSessionToken(session, secret)
     expect(await readSessionToken(token, secret, new Date('2026-01-01T09:00:00.000Z'))).toBeNull()
+  })
+
+  it('does not expose the removed bootstrap endpoint', async () => {
+    const env: Env = {
+      DB: { prepare: () => { throw new Error('Database should not be used') } },
+      SESSION_SECRET: 'test-session-secret-with-at-least-32-chars',
+    }
+    const response = await handleRequest(new Request('https://selleros.xxx/api/internal/bootstrap-owner', { method: 'POST' }), env)
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({ error: { code: 'NOT_FOUND' } })
   })
 })

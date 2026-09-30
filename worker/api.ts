@@ -3,7 +3,6 @@ import type { Role, Session } from '../shared/types'
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from '../shared/oauth'
 import { encryptToken } from './crypto'
 import { exchangeAuthorizationCode, fetchMercadoLivreUser, MERCADOLIVRE_AUTHORIZATION_URL } from './mercadolivre'
-import { bootstrapOwner } from './bootstrap-owner'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
@@ -36,10 +35,6 @@ async function readSession(request: Request, secret: string): Promise<Session | 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
   if (request.method === 'GET' && url.pathname === '/api/health') return json({ ok: true, service: 'selleros-worker' })
-
-  if (request.method === 'POST' && url.pathname === '/api/internal/bootstrap-owner') {
-    return bootstrapOwner(request, env)
-  }
 
   if (request.method === 'POST' && url.pathname === '/api/auth/login') {
     const body = (await request.json().catch(() => null)) as { email?: string; password?: string } | null

@@ -1,7 +1,7 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 2B.2 — First OWNER Bootstrap Ready
+Phase 2B.2 — Bootstrap Cleanup Complete
 
 ## Status
 PASS
@@ -22,7 +22,7 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - OAuth 2.0 Authorization Code + PKCE S256 preparation for Mercado Livre.
 - State-bound, expiring, single-use OAuth attempts linked to the authenticated user and workspace.
 - AES-GCM token encryption abstraction using separate `TOKEN_ENCRYPTION_KEY`.
-- One-time, secret-protected first OWNER/workspace bootstrap using an atomic D1 batch.
+- First production OWNER/workspace created, verified, and bootstrap mechanism removed.
 
 ## Database
 Latest migration: `migrations/0002_mercadolivre_oauth.sql` (remote applied)
@@ -30,7 +30,6 @@ Latest migration: `migrations/0002_mercadolivre_oauth.sql` (remote applied)
 ## Relevant Routes
 - `GET /api/health`
 - `POST /api/auth/login`
-- `POST /api/internal/bootstrap-owner` (temporary, one-time only)
 - `GET /api/workspaces/:workspaceId`
 - `PATCH /api/workspaces/:workspaceId`
 - `GET /api/integrations/mercadolivre/connect`
@@ -39,7 +38,7 @@ Latest migration: `migrations/0002_mercadolivre_oauth.sql` (remote applied)
 - `POST /api/integrations/mercadolivre/disconnect`
 
 ## Tests
-28 PASS, 0 FAIL
+20 PASS, 0 FAIL
 Typecheck: PASS
 Build: PASS
 
@@ -48,14 +47,17 @@ Build: PASS
 - Remote D1: READY
 - Remote migrations: APPLIED
 - Production deployment: PASS
-- Existing production OWNER: NO
-- OWNER bootstrap endpoint: READY (not executed)
-- OWNER_BOOTSTRAP_SECRET: CONFIGURED
+- Existing production OWNER: YES
+- Production OWNER: READY
+- OWNER bootstrap: REMOVED
+- Production login and signed session: PASS
+- OWNER workspace access: PASS
+- OWNER_BOOTSTRAP_SECRET: DELETED
 - PBKDF2 Cloudflare compatibility fix: DEPLOYED
 - Remote migration `0002_mercadolivre_oauth.sql`: APPLIED
 - Mercado Livre configuration secrets: CONFIGURED
 - Phase 2A + temporary bootstrap deployment: PASS
-- Real OAuth: NOT VERIFIED
+- Mercado Livre OAuth: READY FOR REAL TEST
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -66,4 +68,4 @@ SESSION_SECRET: CONFIGURED
 Production smoke test after Phase 2B.2 deploy: PASS
 
 ## Next Exact Task
-Execute the real first OWNER/workspace bootstrap. Bootstrap has not been executed and real OAuth remains unverified. Do not implement synchronization or ReturnShield yet.
+Fase 2B.3: test OAuth real do Mercado Livre. Do not implement synchronization or ReturnShield yet.

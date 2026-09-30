@@ -6,7 +6,6 @@
   "secrets": {
     "required": [
       "SESSION_SECRET",
-      "OWNER_BOOTSTRAP_SECRET",
       "MERCADOLIVRE_CLIENT_ID",
       "MERCADOLIVRE_CLIENT_SECRET",
       "MERCADOLIVRE_REDIRECT_URI",

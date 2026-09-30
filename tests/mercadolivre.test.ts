@@ -20,7 +20,6 @@ class FakeDb implements D1Database {
   integrations: Integration[] = []
   auditCount = 0
   prepare(query: string): D1Statement { return new FakeStatement(this, query) }
-  async batch(_statements: D1Statement[]): Promise<D1Result[]> { throw new Error('Batch is not used by OAuth tests') }
   async first<T>(query: string, values: unknown[]): Promise<T | null> {
     if (query.includes('FROM oauth_attempts')) return (this.attempts.find((attempt) => attempt.state === values[0]) as T | undefined) ?? null
     if (query.includes('FROM integrations')) return (this.integrations.find((integration) => integration.workspace_id === values[0] && integration.channel === 'MERCADOLIVRE') as T | undefined) ?? null
@@ -58,7 +57,7 @@ const secret = 'test-session-secret-with-at-least-32-chars'
 const tokenKey = 'test-token-encryption-key-with-at-least-32-chars'
 
 function makeEnv(db = new FakeDb()): Env & { DB: FakeDb } {
-  return { DB: db, SESSION_SECRET: secret, OWNER_BOOTSTRAP_SECRET: 'test-owner-bootstrap-secret-with-at-least-48-characters', MERCADOLIVRE_CLIENT_ID: 'client-id', MERCADOLIVRE_CLIENT_SECRET: 'client-secret', MERCADOLIVRE_REDIRECT_URI: 'https://selleros.xxxdiogenes.workers.dev/api/integrations/mercadolivre/callback', TOKEN_ENCRYPTION_KEY: tokenKey }
+  return { DB: db, SESSION_SECRET: secret, MERCADOLIVRE_CLIENT_ID: 'client-id', MERCADOLIVRE_CLIENT_SECRET: 'client-secret', MERCADOLIVRE_REDIRECT_URI: 'https://selleros.xxxdiogenes.workers.dev/api/integrations/mercadolivre/callback', TOKEN_ENCRYPTION_KEY: tokenKey }
 }
 
 async function cookieFor(workspaceId = 'workspace-a', userId = 'user-1') {

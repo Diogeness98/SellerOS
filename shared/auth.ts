@@ -44,15 +44,6 @@ async function constantTimeEqual(left: Uint8Array, right: Uint8Array): Promise<b
   return crypto.subtle.verify('HMAC', key, signature, toArrayBuffer(right))
 }
 
-export async function secureStringEqual(left: string, right: string): Promise<boolean> {
-  const encoder = new TextEncoder()
-  const [leftDigest, rightDigest] = await Promise.all([
-    crypto.subtle.digest('SHA-256', encoder.encode(left)),
-    crypto.subtle.digest('SHA-256', encoder.encode(right)),
-  ])
-  return constantTimeEqual(new Uint8Array(leftDigest), new Uint8Array(rightDigest))
-}
-
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(PASSWORD_SALT_BYTES))
   const derived = new Uint8Array(await derivePasswordKey(password, salt, PASSWORD_ITERATIONS))

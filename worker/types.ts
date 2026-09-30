@@ -13,13 +13,11 @@ export interface D1Statement {
 
 export interface D1Database {
   prepare(query: string): D1Statement
-  batch(statements: D1Statement[]): Promise<D1Result[]>
 }
 
 export interface Env {
   DB: D1Database
   SESSION_SECRET: string
-  OWNER_BOOTSTRAP_SECRET: string
   MERCADOLIVRE_CLIENT_ID?: string
   MERCADOLIVRE_CLIENT_SECRET?: string
   MERCADOLIVRE_REDIRECT_URI?: string

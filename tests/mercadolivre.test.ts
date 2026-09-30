@@ -72,6 +72,11 @@ describe('Mercado Livre OAuth preparation', () => {
     expect(response.status).toBe(403)
   })
 
+  it('rejects integration status without a session', async () => {
+    const response = await handleRequest(new Request('https://selleros.xxx/api/integrations/mercadolivre/status'), makeEnv())
+    expect(response.status).toBe(403)
+  })
+
   it('generates a valid PKCE S256 challenge', async () => {
     expect(await createCodeChallenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk')).toBe('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM')
   })

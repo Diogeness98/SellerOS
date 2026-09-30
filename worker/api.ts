@@ -2,10 +2,11 @@ import { canAccessWorkspace, canManageWorkspace, createSession, createSessionTok
 import type { Role, Session } from '../shared/types'
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from '../shared/oauth'
 import { encryptToken } from './crypto'
-import { exchangeAuthorizationCode, fetchMercadoLivreUser, MERCADOLIVRE_AUTHORIZATION_URL } from './mercadolivre'
+import { exchangeAuthorizationCode, fetchMercadoLivreUser, MercadoLivreApiError, MERCADOLIVRE_AUTHORIZATION_URL } from './mercadolivre'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
+type SessionUserRow = { id: string; email: string }
 type MembershipRow = { workspace_id: string; role: Role }
 type OAuthAttemptRow = { state: string; user_id: string; workspace_id: string; code_verifier: string; expires_at: string; consumed_at: string | null }
 type IntegrationRow = { id: string; workspace_id: string; channel: string; status: string; external_account_id: string | null; token_expires_at: string | null; last_sync_at: string | null }
@@ -35,6 +36,20 @@ async function readSession(request: Request, secret: string): Promise<Session | 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
   if (request.method === 'GET' && url.pathname === '/api/health') return json({ ok: true, service: 'selleros-worker' })
+
+  if (request.method === 'GET' && url.pathname === '/api/auth/session') {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return json({ authenticated: false })
+    const user = await env.DB.prepare('SELECT id, email FROM users WHERE id = ?1').bind(session.userId).first<SessionUserRow>()
+    if (!user) return json({ authenticated: false })
+    return json({ authenticated: true, user: { id: user.id, email: user.email }, workspaceId: session.workspaceId })
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
+    return new Response(JSON.stringify({ loggedOut: true }), {
+      headers: { 'content-type': 'application/json', 'set-cookie': `${SESSION_COOKIE}=; Max-Age=0; Expires=${new Date(0).toUTCString()}; HttpOnly; Secure; SameSite=Lax; Path=/` },
+    })
+  }
 
   if (request.method === 'POST' && url.pathname === '/api/auth/login') {
     const body = (await request.json().catch(() => null)) as { email?: string; password?: string } | null
@@ -95,7 +110,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         .bind(crypto.randomUUID(), session.workspaceId, user.id, accessTokenEncrypted, refreshTokenEncrypted, tokenExpiresAt, token.scope ?? null)
         .run()
       return Response.redirect(new URL('/?mercadolivre=connected', url.origin).toString(), 302)
-    } catch {
+    } catch (cause) {
+      if (cause instanceof MercadoLivreApiError) {
+        console.error('Mercado Livre OAuth failed', { stage: cause.stage, status: cause.status, errorCode: cause.errorCode, requestId: cause.requestId })
+      } else {
+        console.error('Mercado Livre OAuth failed', { stage: 'unknown' })
+      }
       return error('OAUTH_EXCHANGE_FAILED', 'Mercado Livre authorization could not be completed', 502)
     }
   }

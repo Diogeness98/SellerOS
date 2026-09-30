@@ -12,6 +12,24 @@ export type MercadoLivreTokenResponse = {
   scope?: string
 }
 
+export class MercadoLivreApiError extends Error {
+  constructor(
+    readonly stage: 'token_exchange' | 'user_lookup',
+    readonly status: number,
+    readonly errorCode: string | null,
+    readonly requestId: string | null,
+  ) {
+    super(`Mercado Livre ${stage} failed`)
+  }
+}
+
+async function responseError(response: Response, stage: MercadoLivreApiError['stage']): Promise<MercadoLivreApiError> {
+  const body = await response.json().catch(() => null) as { error?: unknown; request_id?: unknown } | null
+  const errorCode = typeof body?.error === 'string' ? body.error : null
+  const requestId = typeof body?.request_id === 'string' ? body.request_id : response.headers.get('x-request-id')
+  return new MercadoLivreApiError(stage, response.status, errorCode, requestId)
+}
+
 export async function exchangeAuthorizationCode(input: {
   clientId: string
   clientSecret: string
@@ -28,9 +46,9 @@ export async function exchangeAuthorizationCode(input: {
     code_verifier: input.codeVerifier,
   })
   const response = await fetch(MERCADOLIVRE_TOKEN_URL, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' }, body })
-  if (!response.ok) throw new Error('Mercado Livre token exchange failed')
+  if (!response.ok) throw await responseError(response, 'token_exchange')
   const token = (await response.json()) as Partial<MercadoLivreTokenResponse>
-  if (!token.access_token || !token.refresh_token || typeof token.expires_in !== 'number') throw new Error('Mercado Livre token response was invalid')
+  if (!token.access_token || !token.refresh_token || typeof token.expires_in !== 'number') throw new MercadoLivreApiError('token_exchange', response.status, 'INVALID_RESPONSE', null)
   return token as MercadoLivreTokenResponse
 }
 
@@ -55,8 +73,8 @@ export async function refreshAndStoreMercadoLivreTokens(input: { db: D1Database;
 
 export async function fetchMercadoLivreUser(accessToken: string): Promise<{ id: string }> {
   const response = await fetch(MERCADOLIVRE_USER_URL, { headers: { authorization: `Bearer ${accessToken}` } })
-  if (!response.ok) throw new Error('Mercado Livre user lookup failed')
+  if (!response.ok) throw await responseError(response, 'user_lookup')
   const user = (await response.json()) as { id?: string | number }
-  if (user.id === undefined || user.id === null) throw new Error('Mercado Livre user response was invalid')
+  if (user.id === undefined || user.id === null) throw new MercadoLivreApiError('user_lookup', response.status, 'INVALID_RESPONSE', null)
   return { id: String(user.id) }
 }

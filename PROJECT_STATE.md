@@ -1,7 +1,7 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 2B.2 — Bootstrap Cleanup Complete
+Phase 2B.3 — Mercado Livre OAuth UI Complete
 
 ## Status
 PASS
@@ -23,6 +23,10 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - State-bound, expiring, single-use OAuth attempts linked to the authenticated user and workspace.
 - AES-GCM token encryption abstraction using separate `TOKEN_ENCRYPTION_KEY`.
 - First production OWNER/workspace created, verified, and bootstrap mechanism removed.
+- Minimal login UI with same-origin, HttpOnly-cookie authentication.
+- Signed-session restoration and logout endpoints; only safe session data is returned to the frontend.
+- Mercado Livre connection UI that navigates to the OAuth connect route and safely reports connection status.
+- OAuth external-failure diagnostics log only stage, HTTP status, safe error code, and request ID.
 
 ## Database
 Latest migration: `migrations/0002_mercadolivre_oauth.sql` (remote applied)
@@ -30,6 +34,8 @@ Latest migration: `migrations/0002_mercadolivre_oauth.sql` (remote applied)
 ## Relevant Routes
 - `GET /api/health`
 - `POST /api/auth/login`
+- `GET /api/auth/session`
+- `POST /api/auth/logout`
 - `GET /api/workspaces/:workspaceId`
 - `PATCH /api/workspaces/:workspaceId`
 - `GET /api/integrations/mercadolivre/connect`
@@ -38,7 +44,7 @@ Latest migration: `migrations/0002_mercadolivre_oauth.sql` (remote applied)
 - `POST /api/integrations/mercadolivre/disconnect`
 
 ## Tests
-20 PASS, 0 FAIL
+24 PASS, 0 FAIL
 Typecheck: PASS
 Build: PASS
 
@@ -58,6 +64,10 @@ Build: PASS
 - Mercado Livre configuration secrets: CONFIGURED
 - Phase 2A + temporary bootstrap deployment: PASS
 - Mercado Livre OAuth: READY FOR REAL TEST
+- Phase 2B.3 OAuth UI: PASS
+- Session restore and logout: PASS
+- Mercado Livre connection UI: PASS
+- Real Mercado Livre authorization: WAITING FOR USER
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -66,6 +76,7 @@ Production URL: https://selleros.xxxdiogenes.workers.dev
 Phase 1.5 Auth Hardening: PASS
 SESSION_SECRET: CONFIGURED
 Production smoke test after Phase 2B.2 deploy: PASS
+Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Fase 2B.3: test OAuth real do Mercado Livre. Do not implement synchronization or ReturnShield yet.
+Fase 2B.3: manually test the real Mercado Livre authorization in the browser. Do not implement synchronization or ReturnShield yet.

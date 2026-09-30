@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 2B.3 — Mercado Livre OAuth UI Complete
+Phase 2 — Mercado Livre Connect
 
 ## Status
-PASS
+PASS — REAL_WORLD_VERIFIED
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -27,6 +27,10 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - Signed-session restoration and logout endpoints; only safe session data is returned to the frontend.
 - Mercado Livre connection UI that navigates to the OAuth connect route and safely reports connection status.
 - OAuth external-failure diagnostics log only stage, HTTP status, safe error code, and request ID.
+- OAuth Authorization Code + PKCE: VERIFIED.
+- OAuth state validation and single-use attempt: VERIFIED.
+- Real Mercado Livre authorization: PASS; `/users/me` completed in the Worker.
+- Mercado Livre integration persisted in D1 with an external account ID, encrypted access/refresh tokens, and token expiration.
 
 ## Database
 Latest migration: `migrations/0002_mercadolivre_oauth.sql` (remote applied)
@@ -63,11 +67,19 @@ Build: PASS
 - Remote migration `0002_mercadolivre_oauth.sql`: APPLIED
 - Mercado Livre configuration secrets: CONFIGURED
 - Phase 2A + temporary bootstrap deployment: PASS
-- Mercado Livre OAuth: READY FOR REAL TEST
+- Mercado Livre OAuth: PASS — REAL_WORLD_VERIFIED
 - Phase 2B.3 OAuth UI: PASS
 - Session restore and logout: PASS
 - Mercado Livre connection UI: PASS
-- Real Mercado Livre authorization: WAITING FOR USER
+- OAuth Authorization Code + PKCE: VERIFIED
+- State validation: VERIFIED
+- Real Mercado Livre authorization: PASS
+- `/users/me`: PASS
+- Integration persisted in D1: PASS
+- External account ID persisted: PASS
+- Access token encrypted at rest: PASS
+- Refresh token encrypted at rest: PASS
+- Production OWNER/session: PASS
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -79,4 +91,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Fase 2B.3: manually test the real Mercado Livre authorization in the browser. Do not implement synchronization or ReturnShield yet.
+Phase 3 — Mercado Livre Data Sync Foundation. Do not start this phase yet.

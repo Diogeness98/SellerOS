@@ -1,9 +1,15 @@
 import { canAccessWorkspace, canManageWorkspace, createSession, createSessionToken, readSessionToken, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, verifyPassword } from '../shared/auth'
 import type { Role, Session } from '../shared/types'
+import { createCodeChallenge, createCodeVerifier, createOAuthState } from '../shared/oauth'
+import { encryptToken } from './crypto'
+import { exchangeAuthorizationCode, fetchMercadoLivreUser, MERCADOLIVRE_AUTHORIZATION_URL } from './mercadolivre'
+import { bootstrapOwner } from './bootstrap-owner'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
 type MembershipRow = { workspace_id: string; role: Role }
+type OAuthAttemptRow = { state: string; user_id: string; workspace_id: string; code_verifier: string; expires_at: string; consumed_at: string | null }
+type IntegrationRow = { id: string; workspace_id: string; channel: string; status: string; external_account_id: string | null; token_expires_at: string | null; last_sync_at: string | null }
 
 const json = (body: unknown, status = 200, requestId = crypto.randomUUID()) =>
   new Response(JSON.stringify(body), {
@@ -14,6 +20,13 @@ const json = (body: unknown, status = 200, requestId = crypto.randomUUID()) =>
 const error = (code: string, message: string, status: number, requestId = crypto.randomUUID()) =>
   json({ error: { code, message, requestId } }, status, requestId)
 
+const mercadoLivreConfig = (env: Env) => ({
+  clientId: env.MERCADOLIVRE_CLIENT_ID,
+  clientSecret: env.MERCADOLIVRE_CLIENT_SECRET,
+  redirectUri: env.MERCADOLIVRE_REDIRECT_URI,
+  tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,
+})
+
 async function readSession(request: Request, secret: string): Promise<Session | null> {
   const raw = request.headers.get('cookie')?.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))?.[1]
   if (!raw) return null
@@ -23,6 +36,10 @@ async function readSession(request: Request, secret: string): Promise<Session | 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
   if (request.method === 'GET' && url.pathname === '/api/health') return json({ ok: true, service: 'selleros-worker' })
+
+  if (request.method === 'POST' && url.pathname === '/api/internal/bootstrap-owner') {
+    return bootstrapOwner(request, env)
+  }
 
   if (request.method === 'POST' && url.pathname === '/api/auth/login') {
     const body = (await request.json().catch(() => null)) as { email?: string; password?: string } | null
@@ -38,6 +55,69 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return new Response(JSON.stringify({ user: { id: user.id, email: user.email }, workspaceId: membership.workspace_id }), {
       headers: { 'content-type': 'application/json', 'set-cookie': `${SESSION_COOKIE}=${encoded}; Max-Age=${SESSION_COOKIE_MAX_AGE}; Expires=${expires}; HttpOnly; Secure; SameSite=Lax; Path=/` },
     })
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/integrations/mercadolivre/connect') {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    const config = mercadoLivreConfig(env)
+    if (!config.clientId || !config.redirectUri) return error('CONFIGURATION_ERROR', 'Mercado Livre OAuth is not configured', 503)
+    const state = createOAuthState()
+    const codeVerifier = createCodeVerifier()
+    const codeChallenge = await createCodeChallenge(codeVerifier)
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    await env.DB.prepare('INSERT INTO oauth_attempts (state, user_id, workspace_id, code_verifier, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)')
+      .bind(state, session.userId, session.workspaceId, codeVerifier, expiresAt)
+      .run()
+    const authorizationUrl = new URL(MERCADOLIVRE_AUTHORIZATION_URL)
+    authorizationUrl.search = new URLSearchParams({ response_type: 'code', client_id: config.clientId, redirect_uri: config.redirectUri, state, code_challenge: codeChallenge, code_challenge_method: 'S256' }).toString()
+    return Response.redirect(authorizationUrl.toString(), 302)
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/integrations/mercadolivre/callback') {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    const state = url.searchParams.get('state')
+    const code = url.searchParams.get('code')
+    if (!state || !code) return error('VALIDATION_ERROR', 'code and state are required', 400)
+    const attempt = await env.DB.prepare('SELECT state, user_id, workspace_id, code_verifier, expires_at, consumed_at FROM oauth_attempts WHERE state = ?1').bind(state).first<OAuthAttemptRow>()
+    if (!attempt || attempt.user_id !== session.userId || attempt.workspace_id !== session.workspaceId || attempt.consumed_at || new Date(attempt.expires_at).getTime() <= Date.now()) return error('OAUTH_STATE_INVALID', 'OAuth attempt is invalid or expired', 400)
+    const consumed = await env.DB.prepare('UPDATE oauth_attempts SET consumed_at = ?1 WHERE state = ?2 AND consumed_at IS NULL AND expires_at > ?3')
+      .bind(new Date().toISOString(), state, new Date().toISOString())
+      .run()
+    if (consumed.meta && typeof consumed.meta.changes === 'number' && consumed.meta.changes !== 1) return error('OAUTH_STATE_INVALID', 'OAuth attempt is invalid or already used', 400)
+    const config = mercadoLivreConfig(env)
+    if (!config.clientId || !config.clientSecret || !config.redirectUri || !config.tokenEncryptionKey) return error('CONFIGURATION_ERROR', 'Mercado Livre OAuth is not configured', 503)
+    try {
+      const token = await exchangeAuthorizationCode({ clientId: config.clientId, clientSecret: config.clientSecret, code, redirectUri: config.redirectUri, codeVerifier: attempt.code_verifier })
+      const user = await fetchMercadoLivreUser(token.access_token)
+      const accessTokenEncrypted = await encryptToken(token.access_token, config.tokenEncryptionKey)
+      const refreshTokenEncrypted = await encryptToken(token.refresh_token, config.tokenEncryptionKey)
+      const tokenExpiresAt = new Date(Date.now() + token.expires_in * 1000).toISOString()
+      await env.DB.prepare(`INSERT INTO integrations (id, workspace_id, channel, status, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes)
+        VALUES (?1, ?2, 'MERCADOLIVRE', 'CONNECTED', ?3, ?4, ?5, ?6, ?7)
+        ON CONFLICT(workspace_id, channel) DO UPDATE SET status = 'CONNECTED', external_account_id = excluded.external_account_id, access_token_encrypted = excluded.access_token_encrypted, refresh_token_encrypted = excluded.refresh_token_encrypted, token_expires_at = excluded.token_expires_at, scopes = excluded.scopes, updated_at = datetime('now')`)
+        .bind(crypto.randomUUID(), session.workspaceId, user.id, accessTokenEncrypted, refreshTokenEncrypted, tokenExpiresAt, token.scope ?? null)
+        .run()
+      return Response.redirect(new URL('/?mercadolivre=connected', url.origin).toString(), 302)
+    } catch {
+      return error('OAUTH_EXCHANGE_FAILED', 'Mercado Livre authorization could not be completed', 502)
+    }
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/integrations/mercadolivre/status') {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    const integration = await env.DB.prepare("SELECT id, workspace_id, channel, status, external_account_id, token_expires_at, last_sync_at FROM integrations WHERE workspace_id = ?1 AND channel = 'MERCADOLIVRE'").bind(session.workspaceId).first<IntegrationRow>()
+    return json({ connected: integration?.status === 'CONNECTED', channel: 'MERCADOLIVRE', externalAccountId: integration?.external_account_id ?? null, tokenExpiresAt: integration?.token_expires_at ?? null, lastSyncAt: integration?.last_sync_at ?? null })
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/integrations/mercadolivre/disconnect') {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    await env.DB.prepare("UPDATE integrations SET status = 'DISCONNECTED', access_token_encrypted = NULL, refresh_token_encrypted = NULL, token_expires_at = NULL, updated_at = datetime('now') WHERE workspace_id = ?1 AND channel = 'MERCADOLIVRE'").bind(session.workspaceId).run()
+    await env.DB.prepare("INSERT INTO audit_logs (id, workspace_id, actor_type, actor_id, action, entity_type, entity_id, source) VALUES (?1, ?2, 'USER', ?3, 'INTEGRATION_DISCONNECTED', 'INTEGRATION', 'MERCADOLIVRE', 'selleros')").bind(crypto.randomUUID(), session.workspaceId, session.userId).run()
+    return json({ disconnected: true, channel: 'MERCADOLIVRE' })
   }
 
   if (url.pathname.startsWith('/api/workspaces/')) {

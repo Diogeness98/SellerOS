@@ -24,6 +24,7 @@ describe('auth foundation', () => {
 
   it('accepts the correct password and rejects an incorrect one', async () => {
     const hash = await hashPassword('correct-password')
+    expect(hash.split('$')[1]).toBe('100000')
     expect(await verifyPassword('correct-password', hash)).toBe(true)
     expect(await verifyPassword('wrong-password', hash)).toBe(false)
   })

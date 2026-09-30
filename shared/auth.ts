@@ -2,7 +2,8 @@ import type { Role, Session } from './types'
 
 export const SESSION_COOKIE = 'selleros_session'
 const PASSWORD_HASH_PREFIX = 'pbkdf2_sha256'
-const PASSWORD_ITERATIONS = 600_000
+// Cloudflare Workers Web Crypto rejects PBKDF2 iteration counts above 100,000.
+const PASSWORD_ITERATIONS = 100_000
 const PASSWORD_SALT_BYTES = 16
 const PASSWORD_KEY_BYTES = 32
 const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60
@@ -41,6 +42,15 @@ async function constantTimeEqual(left: Uint8Array, right: Uint8Array): Promise<b
   const key = await crypto.subtle.generateKey({ name: 'HMAC', hash: 'SHA-256' }, true, ['sign', 'verify'])
   const signature = await crypto.subtle.sign('HMAC', key, toArrayBuffer(left))
   return crypto.subtle.verify('HMAC', key, signature, toArrayBuffer(right))
+}
+
+export async function secureStringEqual(left: string, right: string): Promise<boolean> {
+  const encoder = new TextEncoder()
+  const [leftDigest, rightDigest] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(left)),
+    crypto.subtle.digest('SHA-256', encoder.encode(right)),
+  ])
+  return constantTimeEqual(new Uint8Array(leftDigest), new Uint8Array(rightDigest))
 }
 
 export async function hashPassword(password: string): Promise<string> {

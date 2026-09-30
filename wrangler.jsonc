@@ -4,7 +4,14 @@
   "compatibility_date": "2026-09-30",
   "main": "./worker/index.ts",
   "secrets": {
-    "required": ["SESSION_SECRET"]
+    "required": [
+      "SESSION_SECRET",
+      "OWNER_BOOTSTRAP_SECRET",
+      "MERCADOLIVRE_CLIENT_ID",
+      "MERCADOLIVRE_CLIENT_SECRET",
+      "MERCADOLIVRE_REDIRECT_URI",
+      "TOKEN_ENCRYPTION_KEY"
+    ]
   },
   "assets": {
     "not_found_handling": "single-page-application",

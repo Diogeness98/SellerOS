@@ -71,6 +71,10 @@ export function canManageWorkspace(role: Role): boolean {
   return role === 'OWNER' || role === 'ADMIN'
 }
 
+export function canOperateWorkspace(role: Role): boolean {
+  return role === 'OWNER' || role === 'ADMIN' || role === 'MANAGER' || role === 'OPERATOR'
+}
+
 export function createSession(userId: string, workspaceId: string, role: Role, now = new Date()): Session {
   const expiresAt = new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString()
   return { userId, workspaceId, role, expiresAt }

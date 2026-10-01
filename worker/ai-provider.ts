@@ -16,14 +16,20 @@ export const DEFENSE_INSTRUCTIONS = `You are the ReturnShield Defense Copilot. A
 
 export class OpenAIProvider implements AIProvider {
   readonly name = 'openai'
-  constructor(private readonly apiKey: string, private readonly fetcher: typeof fetch = fetch) {}
+  constructor(private readonly apiKey: string, private readonly fetcher: typeof fetch = fetch, private readonly timeoutMs = 20_000) {}
   async generateStructured<T>(request: AIRequest, schema: unknown): Promise<AIResult<T>> {
     const started = Date.now()
-    const response = await this.fetcher('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: request.model, store: false, tools: [], max_output_tokens: 1400, instructions: request.instructions, input: JSON.stringify(request.input), text: { format: { type: 'json_schema', name: 'defense_analysis', strict: true, schema } } }),
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    let response: Response
+    try {
+      response = await this.fetcher('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: request.model, store: false, tools: [], max_output_tokens: 1400, instructions: request.instructions, input: JSON.stringify(request.input), text: { format: { type: 'json_schema', name: 'defense_analysis', strict: true, schema } } }),
+        signal: controller.signal,
+      })
+    } catch { throw new AIProviderError('AI_UNAVAILABLE') } finally { clearTimeout(timeout) }
     if (!response.ok) throw new AIProviderError('AI_UNAVAILABLE')
     const body = await response.json() as { output_text?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown }; output?: Array<{ content?: Array<{ type?: string; text?: string }> }> }
     const outputText = typeof body.output_text === 'string' ? body.output_text : body.output?.flatMap((item) => item.content ?? []).find((item) => item.type === 'output_text')?.text

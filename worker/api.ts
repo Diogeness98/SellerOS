@@ -1,4 +1,4 @@
-import { canAccessWorkspace, canManageWorkspace, createSession, createSessionToken, readSessionToken, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, verifyPassword } from '../shared/auth'
+import { canAccessWorkspace, canManageWorkspace, canOperateWorkspace, createSession, createSessionToken, readSessionToken, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, verifyPassword } from '../shared/auth'
 import type { Role, Session } from '../shared/types'
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from '../shared/oauth'
 import { encryptToken } from './crypto'
@@ -8,6 +8,7 @@ import { getReturnShieldDashboard } from './returnshield'
 import { downloadEvidenceAsset, EvidenceError, EvidenceSyncService, getEvidencePack } from './evidence'
 import { OpenAIProvider } from './ai-provider'
 import { DefenseCopilotService, DefenseError } from './defense'
+import { takeRateLimit } from './rate-limit'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
@@ -36,6 +37,16 @@ const mercadoLivreConfig = (env: Env) => ({
 const evidenceInput = (env: Env) => ({ db: env.DB, clientId: env.MERCADOLIVRE_CLIENT_ID, clientSecret: env.MERCADOLIVRE_CLIENT_SECRET, tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY })
 const defenseService = (env: Env) => env.OPENAI_API_KEY && env.OPENAI_MODEL ? new DefenseCopilotService(env.DB, new OpenAIProvider(env.OPENAI_API_KEY), env.OPENAI_MODEL) : null
 
+export function isAllowedMutationOrigin(request: Request, url: URL): boolean {
+  const origin = request.headers.get('origin')
+  return !origin || origin === url.origin
+}
+
+async function withinRateLimit(env: Env, request: Request, scope: string, subject: string, limit: number, windowMs: number): Promise<boolean> {
+  if (env.RATE_LIMITS_ENABLED !== 'true') return true
+  return takeRateLimit(env.DB, scope, subject, env.SESSION_SECRET, limit, windowMs)
+}
+
 async function readSession(request: Request, secret: string): Promise<Session | null> {
   const raw = request.headers.get('cookie')?.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))?.[1]
   if (!raw) return null
@@ -44,6 +55,7 @@ async function readSession(request: Request, secret: string): Promise<Session | 
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
+  if ((request.method === 'POST' || request.method === 'PATCH') && !isAllowedMutationOrigin(request, url)) return error('FORBIDDEN', 'Invalid request origin', 403)
   if (request.method === 'GET' && url.pathname === '/api/health') return json({ ok: true, service: 'selleros-worker' })
 
   if (request.method === 'GET' && url.pathname === '/api/auth/session') {
@@ -64,6 +76,8 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const body = (await request.json().catch(() => null)) as { email?: string; password?: string } | null
     if (!body?.email || !body.password) return error('VALIDATION_ERROR', 'email and password are required', 400)
     if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32) return error('CONFIGURATION_ERROR', 'SESSION_SECRET must be at least 32 characters', 503)
+    const source = request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown'
+    if (!(await withinRateLimit(env, request, 'login', source, 5, 15 * 60 * 1000))) return error('RATE_LIMITED', 'Too many requests', 429)
     const user = await env.DB.prepare('SELECT id, email, password_hash FROM users WHERE email = ?1').bind(body.email).first<UserRow>()
     if (!user || !(await verifyPassword(body.password, user.password_hash))) return error('UNAUTHORIZED', 'Invalid credentials', 401)
     const membership = await env.DB.prepare('SELECT workspace_id, role FROM workspace_members WHERE user_id = ?1 LIMIT 1').bind(user.id).first<MembershipRow>()
@@ -158,6 +172,8 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   if (request.method === 'POST' && evidenceSyncMatch) {
     const session = await readSession(request, env.SESSION_SECRET)
     if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    if (!canOperateWorkspace(session.role)) return error('FORBIDDEN', 'Insufficient permissions', 403)
+    if (!(await withinRateLimit(env, request, 'evidence-sync', session.workspaceId, 10, 15 * 60 * 1000))) return error('RATE_LIMITED', 'Too many requests', 429)
     try {
       return json(await new EvidenceSyncService(evidenceInput(env)).sync(session.workspaceId, decodeURIComponent(evidenceSyncMatch[1])))
     } catch (cause) {
@@ -184,6 +200,8 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   if (defenseMatch && (request.method === 'GET' || request.method === 'POST')) {
     const session = await readSession(request, env.SESSION_SECRET)
     if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    if (request.method === 'POST' && !canOperateWorkspace(session.role)) return error('FORBIDDEN', 'Insufficient permissions', 403)
+    if (request.method === 'POST' && !(await withinRateLimit(env, request, 'defense-analysis', session.workspaceId, 3, 60 * 60 * 1000))) return error('RATE_LIMITED', 'Too many requests', 429)
     const service = defenseService(env)
     if (!service) return error('CONFIGURATION_ERROR', 'Defense Copilot is not configured', 503)
     try {
@@ -201,6 +219,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const session = await readSession(request, env.SESSION_SECRET)
     if (!session) return error('FORBIDDEN', 'Authentication required', 403)
     if (!canManageWorkspace(session.role)) return error('FORBIDDEN', 'Insufficient permissions', 403)
+    if (!(await withinRateLimit(env, request, 'mercadolivre-sync', session.workspaceId, 5, 15 * 60 * 1000))) return error('RATE_LIMITED', 'Too many requests', 429)
     try {
       const result = await new MercadoLivreSyncService({
         db: env.DB,
@@ -231,6 +250,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   if (request.method === 'POST' && url.pathname === '/api/integrations/mercadolivre/disconnect') {
     const session = await readSession(request, env.SESSION_SECRET)
     if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    if (!canManageWorkspace(session.role)) return error('FORBIDDEN', 'Insufficient permissions', 403)
     await env.DB.prepare("UPDATE integrations SET status = 'DISCONNECTED', access_token_encrypted = NULL, refresh_token_encrypted = NULL, token_expires_at = NULL, updated_at = datetime('now') WHERE workspace_id = ?1 AND channel = 'MERCADOLIVRE'").bind(session.workspaceId).run()
     await env.DB.prepare("INSERT INTO audit_logs (id, workspace_id, actor_type, actor_id, action, entity_type, entity_id, source) VALUES (?1, ?2, 'USER', ?3, 'INTEGRATION_DISCONNECTED', 'INTEGRATION', 'MERCADOLIVRE', 'selleros')").bind(crypto.randomUUID(), session.workspaceId, session.userId).run()
     return json({ disconnected: true, channel: 'MERCADOLIVRE' })

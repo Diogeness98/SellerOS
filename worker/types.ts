@@ -24,4 +24,5 @@ export interface Env {
   TOKEN_ENCRYPTION_KEY?: string
   OPENAI_API_KEY?: string
   OPENAI_MODEL?: string
+  RATE_LIMITS_ENABLED?: string
 }

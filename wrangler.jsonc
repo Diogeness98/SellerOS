@@ -4,7 +4,8 @@
   "compatibility_date": "2026-09-30",
   "main": "./worker/index.ts",
   "vars": {
-    "OPENAI_MODEL": "gpt-5.6-luna"
+    "OPENAI_MODEL": "gpt-5.6-luna",
+    "RATE_LIMITS_ENABLED": "true"
   },
   "secrets": {
     "required": [
@@ -12,7 +13,8 @@
       "MERCADOLIVRE_CLIENT_ID",
       "MERCADOLIVRE_CLIENT_SECRET",
       "MERCADOLIVRE_REDIRECT_URI",
-      "TOKEN_ENCRYPTION_KEY"
+      "TOKEN_ENCRYPTION_KEY",
+      "OPENAI_API_KEY"
     ]
   },
   "assets": {

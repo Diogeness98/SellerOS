@@ -8,7 +8,7 @@ const pack = { externalClaimId: 'claim-1', claim: { status: 'opened', type: 'ret
 
 class S implements D1Statement { constructor(private readonly db: Db, private readonly query: string, private readonly values: unknown[] = []) {} bind(...values: unknown[]): D1Statement { return new S(this.db, this.query, values) } async first<T>(): Promise<T | null> { return this.db.first<T>(this.query, this.values) } async all<T>(): Promise<D1Result<T>> { return { results: [] as T[], success: true } } async run(): Promise<D1Result> { return this.db.run(this.query, this.values) } }
 class Db implements D1Database {
-  analyses: Array<{ id: string; status: 'RUNNING' | 'SUCCESS' | 'FAILED'; output_json: string | null; model?: string; prompt_version?: string }> = []
+  analyses: Array<{ id: string; status: 'RUNNING' | 'SUCCESS' | 'FAILED'; output_json: string | null; started_at?: string | null; model?: string; prompt_version?: string }> = []
   usage = 0
   prepare(query: string): D1Statement { return new S(this, query) }
   async first<T>(query: string, values: unknown[]): Promise<T | null> {
@@ -17,7 +17,8 @@ class Db implements D1Database {
     return null
   }
   async run(query: string, values: unknown[]): Promise<D1Result> {
-    if (query.startsWith('INSERT INTO defense_analyses')) this.analyses.push({ id: String(values[0]), status: 'RUNNING', output_json: null, model: String(values[7]), prompt_version: String(values[5]) })
+    if (query.startsWith('INSERT INTO defense_analyses')) this.analyses.push({ id: String(values[0]), status: 'RUNNING', output_json: null, started_at: String(values[9]), model: String(values[7]), prompt_version: String(values[5]) })
+    if (query.startsWith("UPDATE defense_analyses SET status = 'RUNNING'")) { const item = this.analyses.find((entry) => entry.id === values[1])!; item.started_at = String(values[0]) }
     if (query.startsWith("UPDATE defense_analyses SET status = 'SUCCESS'")) { const item = this.analyses.find((entry) => entry.id === values[2])!; item.status = 'SUCCESS'; item.output_json = String(values[0]) }
     if (query.startsWith("UPDATE defense_analyses SET status = 'FAILED'")) { const item = this.analyses.find((entry) => entry.id === values[2])!; item.status = 'FAILED' }
     if (query.startsWith('INSERT INTO ai_usage')) this.usage += 1
@@ -52,7 +53,7 @@ describe('Defense Copilot Foundation', () => {
   })
 
   it('blocks RUNNING work, changes cache by model, and limits invalid output repair to one retry', async () => {
-    const db = new Db(); db.analyses.push({ id: 'running', status: 'RUNNING', output_json: null })
+    const db = new Db(); db.analyses.push({ id: 'running', status: 'RUNNING', output_json: null, started_at: new Date().toISOString() })
     await expect(new DefenseCopilotService(db, new FakeAIProvider(valid), 'gpt-5.6-luna').analyze('workspace-a', 'claim-1')).rejects.toMatchObject({ code: 'ANALYSIS_IN_PROGRESS' } satisfies Partial<DefenseError>)
     const bad = new FakeAIProvider({ summary: 'invalid' }); const clean = new Db()
     await expect(new DefenseCopilotService(clean, bad, 'gpt-5.6-luna').analyze('workspace-a', 'claim-1')).rejects.toMatchObject({ code: 'COPILOT_UNAVAILABLE' } satisfies Partial<DefenseError>)
@@ -63,5 +64,19 @@ describe('Defense Copilot Foundation', () => {
   it('handles provider timeout, rate limit, and invalid provider output without exposing raw errors', async () => {
     const unavailable = { name: 'fake', generateStructured: async () => { throw new AIProviderError('AI_UNAVAILABLE') } }
     await expect(new DefenseCopilotService(new Db(), unavailable, 'gpt-5.6-luna').analyze('workspace-a', 'claim-1')).rejects.toMatchObject({ code: 'COPILOT_UNAVAILABLE' } satisfies Partial<DefenseError>)
+  })
+
+  it('recovers a stale RUNNING lock while keeping a recent lock blocked', async () => {
+    const now = new Date('2026-10-01T12:00:00.000Z'); const db = new Db()
+    db.analyses.push({ id: 'stale', status: 'RUNNING', output_json: null, started_at: new Date(now.getTime() - 11 * 60 * 1000).toISOString() })
+    const provider = new FakeAIProvider(valid)
+    await expect(new DefenseCopilotService(db, provider, 'gpt-5.6-luna', () => now).analyze('workspace-a', 'claim-1')).resolves.toMatchObject({ cacheHit: false })
+    expect(provider.calls).toBe(1)
+  })
+
+  it('maps an aborted OpenAI request to a safe provider error', async () => {
+    const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))))
+    const provider = new OpenAIProvider('test-key', fetcher as unknown as typeof fetch, 1)
+    await expect(provider.generateStructured({ instructions: 'test', input: {}, model: 'gpt-5.6-luna' }, { type: 'object' })).rejects.toMatchObject({ code: 'AI_UNAVAILABLE' } satisfies Partial<AIProviderError>)
   })
 })

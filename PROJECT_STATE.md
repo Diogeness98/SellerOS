@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 6A — Evidence Pack Foundation
+Phase 6 — Evidence Pack
 
 ## Status
-LOCAL READY / REMOTE MIGRATION PENDING
+PASS — PRODUCTION_VERIFIED / ZERO_DATA_ACCOUNT
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -44,7 +44,7 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - Secure authenticated attachment proxy, deterministic timeline, and Missing Evidence V1 rules.
 
 ## Database
-Latest migration: `migrations/0005_evidence_pack.sql` (local ready; remote pending)
+Latest migration: `migrations/0005_evidence_pack.sql` (remote applied)
 
 ## Relevant Routes
 - `GET /api/health`
@@ -125,13 +125,16 @@ Build: PASS
 - AI dependency: NONE
 - Production data: ZERO DATA ACCOUNT
 - Real risk-case calculation: PENDING REAL CLAIM DATA
-- EvidencePackService: READY
-- Claim messages read sync: READY
-- Attachment metadata: READY
-- Secure attachment proxy: READY
-- Deterministic timeline: READY
-- Missing Evidence V1: READY
-- External write actions: NONE
+- Migration `0005_evidence_pack.sql`: APPLIED
+- Evidence Pack API: DEPLOYED
+- Evidence sync service: DEPLOYED
+- Attachment metadata: DEPLOYED
+- Secure attachment proxy: DEPLOYED
+- Deterministic timeline: DEPLOYED
+- Missing Evidence V1: DEPLOYED
+- Mercado Livre writes: NONE
+- Real message sync: PENDING REAL CLAIM DATA
+- Real attachment download: PENDING REAL CLAIM DATA
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -143,4 +146,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Phase 6B — migration + deploy + live zero-data verification.
+Phase 7 — Defense Copilot.

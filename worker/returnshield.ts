@@ -196,3 +196,11 @@ export async function getReturnShieldDashboard(db: D1Database, workspaceId: stri
     WHERE c.workspace_id = ?1 AND c.channel = 'MERCADOLIVRE'`).bind(workspaceId).all<ClaimRow>()
   return buildDashboard(result.results, now)
 }
+
+export async function getRiskCase(db: D1Database, workspaceId: string, externalClaimId: string, now = new Date()): Promise<RiskCase | null> {
+  const row = await db.prepare(`SELECT c.id AS claim_id, c.external_id AS external_claim_id, c.order_id, c.status, c.has_return, c.due_date, c.title, c.problem,
+      o.external_id AS external_order_id, o.paid_amount, o.total_amount, o.currency_id
+    FROM claims c LEFT JOIN orders o ON o.id = c.order_id AND o.workspace_id = c.workspace_id
+    WHERE c.workspace_id = ?1 AND c.channel = 'MERCADOLIVRE' AND c.external_id = ?2`).bind(workspaceId, externalClaimId).first<ClaimRow>()
+  return row ? scoreRiskCase(row, now) : null
+}

@@ -5,6 +5,7 @@ type Integration = { connected: boolean; externalAccountId: string | null; lastS
 type PriorityCase = { externalClaimId: string; externalOrderId: string | null; estimatedExposure: number | null; currencyId: string | null; amountKnown: boolean; deadlineAt: string | null; hoursToDeadline: number | null; riskScore: number; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'; hasReturn: boolean; overdue: boolean; title: string | null; problem: string | null; reasons: string[] }
 type Dashboard = { moneyAtRisk: { currency: 'BRL'; estimatedAmount: number; pricedCases: number; unpricedCases: number }; openCases: number; criticalCases: number; highCases: number; overdueCases: number; dueToday: number; casesWithReturns: number; priorityCases: PriorityCase[] }
 type EvidencePack = { externalClaimId: string; claim: { status: string | null; type: string | null; stage: string | null; reasonId: string | null; title: string | null; problem: string | null; dueDate: string | null; createdAt: string | null; updatedAt: string | null }; order: { externalOrderId: string; status: string | null; currencyId: string | null; totalAmount: number | null; paidAmount: number | null; createdAt: string | null } | null; items: Array<{ externalItemId: string; title: string | null; sellerSku: string | null; quantity: number; unitPrice: number | null; productStatus: string | null; categoryId: string | null }>; returns: Array<{ externalReturnId: string; status: string | null; subtype: string | null; refundAt: string | null; closedAt: string | null }>; messages: Array<{ senderRole: string | null; receiverRole: string | null; messageText: string | null; messageDate: string | null }>; assets: Array<{ externalId: string; originalFilename: string | null; mimeType: string | null; sizeBytes: number | null; createdAt: string | null }>; timeline: Array<{ type: string; at: string; source: string; summary: string }>; missingEvidence: string[] }
+type DefenseAnalysis = { summary: string; riskExplanation: string; keyFacts: Array<{ text: string; sourceRefs: string[] }>; inconsistencies: Array<{ text: string; sourceRefs: string[] }>; evidenceSuggestions: string[]; recommendedResponse: string; confidence: number }
 export type SyncResult = { jobId: string; status: 'SUCCESS' | 'PARTIAL' | 'FAILED'; products: number; orders: number; claims: number; returns: number; created: number; updated: number; failed: number; startedAt: string; finishedAt: string }
 
 const reasonLabels: Record<string, string> = {
@@ -51,6 +52,9 @@ export function App() {
   const [evidencePack, setEvidencePack] = useState<EvidencePack | null>(null)
   const [evidenceError, setEvidenceError] = useState('')
   const [evidenceSyncing, setEvidenceSyncing] = useState(false)
+  const [defenseAnalysis, setDefenseAnalysis] = useState<DefenseAnalysis | null>(null)
+  const [defenseLoading, setDefenseLoading] = useState(false)
+  const [defenseError, setDefenseError] = useState('')
 
   async function restoreSession() {
     const response = await fetch(sessionEndpoint, { credentials: 'include' })
@@ -124,6 +128,8 @@ export function App() {
     setDashboard(null)
     setEvidencePack(null)
     setEvidenceError('')
+    setDefenseAnalysis(null)
+    setDefenseError('')
   }
 
   async function syncMercadoLivre() {
@@ -155,6 +161,17 @@ export function App() {
     } catch {
       setEvidenceError('Não foi possível carregar as evidências deste caso.')
     }
+  }
+
+  async function analyzeDefense() {
+    if (!evidencePack) return
+    setDefenseLoading(true); setDefenseError('')
+    try {
+      const response = await fetch(`/api/returnshield/cases/${encodeURIComponent(evidencePack.externalClaimId)}/defense-analysis`, { method: 'POST', credentials: 'include' })
+      if (!response.ok) throw new Error('Defense analysis failed')
+      const body = await response.json() as { analysis: DefenseAnalysis | null }
+      setDefenseAnalysis(body.analysis)
+    } catch { setDefenseError('Copiloto temporariamente indisponível.') } finally { setDefenseLoading(false) }
   }
 
   async function syncEvidence() {
@@ -233,6 +250,7 @@ export function App() {
                 <article><h3>Anexos</h3>{evidencePack.assets.length ? evidencePack.assets.map((asset) => <p key={asset.externalId}>{asset.originalFilename ?? asset.externalId} <a href={`/api/returnshield/cases/${encodeURIComponent(evidencePack.externalClaimId)}/assets/${encodeURIComponent(asset.externalId)}/download`}>Baixar</a></p>) : <p>Nenhum anexo sincronizado.</p>}</article>
                 <article><h3>Informações ausentes</h3>{evidencePack.missingEvidence.length ? evidencePack.missingEvidence.map((item) => <p key={item}>{item}</p>) : <p>Nenhuma informação ausente identificada.</p>}</article>
               </div>
+              <section className="defense-copilot"><h3>Defense Copilot</h3><p>A IA analisa somente os dados disponíveis no Evidence Pack. Nenhuma ação é enviada ao Mercado Livre.</p><button onClick={() => void analyzeDefense()} disabled={defenseLoading}>{defenseLoading ? 'Analisando…' : 'Analisar com IA'}</button>{defenseError && <p className="error" role="alert">{defenseError}</p>}{defenseAnalysis && <div className="evidence-grid"><article><h3>Resumo</h3><p>{defenseAnalysis.summary}</p><h3>Por que este caso merece atenção</h3><p>{defenseAnalysis.riskExplanation}</p></article><article><h3>Fatos utilizados</h3>{defenseAnalysis.keyFacts.map((item, index) => <p key={index}>{item.text}</p>)}<h3>Inconsistências</h3>{defenseAnalysis.inconsistencies.map((item, index) => <p key={index}>{item.text}</p>)}</article><article><h3>Evidências que vale revisar</h3>{defenseAnalysis.evidenceSuggestions.map((item, index) => <p key={index}>{item}</p>)}</article><article><h3>Resposta sugerida</h3><p>{defenseAnalysis.recommendedResponse}</p><button className="secondary" onClick={() => void navigator.clipboard?.writeText(defenseAnalysis.recommendedResponse)}>Copiar resposta</button><p>Confiança da análise: {defenseAnalysis.confidence}/100</p></article></div>}</section>
             </section>}
           </>
         ) : <p className="loading">Carregando ReturnShield…</p>}

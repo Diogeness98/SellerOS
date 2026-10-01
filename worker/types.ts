@@ -22,4 +22,6 @@ export interface Env {
   MERCADOLIVRE_CLIENT_SECRET?: string
   MERCADOLIVRE_REDIRECT_URI?: string
   TOKEN_ENCRYPTION_KEY?: string
+  OPENAI_API_KEY?: string
+  OPENAI_MODEL?: string
 }

@@ -3,6 +3,9 @@
   "name": "selleros",
   "compatibility_date": "2026-09-30",
   "main": "./worker/index.ts",
+  "vars": {
+    "OPENAI_MODEL": "gpt-6-luna"
+  },
   "secrets": {
     "required": [
       "SESSION_SECRET",

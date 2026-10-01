@@ -6,6 +6,8 @@ import { exchangeAuthorizationCode, fetchMercadoLivreUser, MercadoLivreApiError,
 import { MercadoLivreSyncService, SyncError } from './sync'
 import { getReturnShieldDashboard } from './returnshield'
 import { downloadEvidenceAsset, EvidenceError, EvidenceSyncService, getEvidencePack } from './evidence'
+import { OpenAIProvider } from './ai-provider'
+import { DefenseCopilotService, DefenseError } from './defense'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
@@ -32,6 +34,7 @@ const mercadoLivreConfig = (env: Env) => ({
 })
 
 const evidenceInput = (env: Env) => ({ db: env.DB, clientId: env.MERCADOLIVRE_CLIENT_ID, clientSecret: env.MERCADOLIVRE_CLIENT_SECRET, tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY })
+const defenseService = (env: Env) => env.OPENAI_API_KEY ? new DefenseCopilotService(env.DB, new OpenAIProvider(env.OPENAI_API_KEY), env.OPENAI_MODEL ?? 'gpt-6-luna') : null
 
 async function readSession(request: Request, secret: string): Promise<Session | null> {
   const raw = request.headers.get('cookie')?.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))?.[1]
@@ -174,6 +177,23 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     } catch (cause) {
       if (cause instanceof EvidenceError && (cause.code === 'CLAIM_NOT_FOUND' || cause.code === 'ASSET_NOT_FOUND')) return error('NOT_FOUND', 'Asset not found', 404)
       return error('ASSET_DOWNLOAD_FAILED', 'Asset could not be downloaded', 502)
+    }
+  }
+
+  const defenseMatch = url.pathname.match(/^\/api\/returnshield\/cases\/([^/]+)\/defense-analysis$/)
+  if (defenseMatch && (request.method === 'GET' || request.method === 'POST')) {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    const service = defenseService(env)
+    if (!service) return error('CONFIGURATION_ERROR', 'Defense Copilot is not configured', 503)
+    try {
+      const externalClaimId = decodeURIComponent(defenseMatch[1])
+      const result = request.method === 'POST' ? await service.analyze(session.workspaceId, externalClaimId) : await service.latest(session.workspaceId, externalClaimId)
+      return json({ analysis: result?.analysis ?? null, cacheHit: result?.cacheHit ?? false, model: result?.model ?? null, promptVersion: result?.promptVersion ?? null })
+    } catch (cause) {
+      if (cause instanceof DefenseError && cause.code === 'CLAIM_NOT_FOUND') return error('NOT_FOUND', 'Claim not found', 404)
+      if (cause instanceof DefenseError && cause.code === 'ANALYSIS_IN_PROGRESS') return error('ANALYSIS_IN_PROGRESS', 'Analysis is already running', 409)
+      return error('COPILOT_UNAVAILABLE', 'Copiloto temporariamente indisponível.', 503)
     }
   }
 

@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 6 — Evidence Pack
+Phase 7A — Defense Copilot Foundation
 
 ## Status
-PASS — PRODUCTION_VERIFIED / ZERO_DATA_ACCOUNT
+LOCAL READY / REMOTE MIGRATION PENDING
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -42,9 +42,10 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - ReturnShield dashboard UI with zero-data state and Mercado Livre integration card preserved.
 - Evidence Pack Foundation with on-demand, read-only Mercado Livre message and attachment-metadata sync.
 - Secure authenticated attachment proxy, deterministic timeline, and Missing Evidence V1 rules.
+- Defense Copilot foundation using Evidence Pack and deterministic risk as the sole AI source of truth.
 
 ## Database
-Latest migration: `migrations/0005_evidence_pack.sql` (remote applied)
+Latest migration: `migrations/0006_defense_copilot.sql` (local ready; remote pending)
 
 ## Relevant Routes
 - `GET /api/health`
@@ -63,9 +64,11 @@ Latest migration: `migrations/0005_evidence_pack.sql` (remote applied)
 - `GET /api/returnshield/cases/:externalClaimId/evidence-pack`
 - `POST /api/returnshield/cases/:externalClaimId/evidence/sync`
 - `GET /api/returnshield/cases/:externalClaimId/assets/:assetId/download`
+- `GET /api/returnshield/cases/:externalClaimId/defense-analysis`
+- `POST /api/returnshield/cases/:externalClaimId/defense-analysis`
 
 ## Tests
-57 PASS, 0 FAIL
+62 PASS, 0 FAIL
 Typecheck: PASS
 Build: PASS
 
@@ -135,6 +138,18 @@ Build: PASS
 - Mercado Livre writes: NONE
 - Real message sync: PENDING REAL CLAIM DATA
 - Real attachment download: PENDING REAL CLAIM DATA
+- AI Provider abstraction: READY
+- OpenAI Responses provider: READY
+- Default model: gpt-6-luna
+- Structured output: READY
+- Prompt injection protection: READY
+- Evidence Pack source-of-truth: READY
+- Source reference validation: READY
+- Cache: READY
+- AI usage tracking: READY
+- Defense Copilot UI: READY
+- Marketplace execution: NONE
+- Real OpenAI call: NOT EXECUTED
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -146,4 +161,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Phase 7 — Defense Copilot.
+Phase 7B — OpenAI secret + migration + deploy + controlled real API verification.

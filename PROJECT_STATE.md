@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 3A — Mercado Livre Data Sync Foundation
+Phase 3 — Mercado Livre Data Sync
 
 ## Status
-LOCAL READY — REMOTE MIGRATION PENDING
+PASS — LIVE_API_VERIFIED / ZERO_DATA_ACCOUNT
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -34,9 +34,11 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - Local Mercado Livre sync foundation for products and orders with idempotent, workspace-scoped persistence.
 - Token service that refreshes only when needed and atomically replaces the one-time refresh token after a successful renewal.
 - Sync job tracking with a per-workspace/integration `RUNNING` guard and safe result summaries.
+- Real Mercado Livre products and orders requests verified against the connected seller account; the account returned zero listings and zero orders.
+- Sync API returns `502/SYNC_FAILED` instead of HTTP 200 when the service reports `FAILED`; zero-data and partial-sync states are surfaced safely in the UI.
 
 ## Database
-Latest migration: `migrations/0003_commerce_sync.sql` (local ready; remote not applied)
+Latest migration: `migrations/0003_commerce_sync.sql` (remote applied)
 
 ## Relevant Routes
 - `GET /api/health`
@@ -53,7 +55,7 @@ Latest migration: `migrations/0003_commerce_sync.sql` (local ready; remote not a
 - `GET /api/integrations/mercadolivre/sync/status`
 
 ## Tests
-37 PASS, 0 FAIL
+40 PASS, 0 FAIL
 Typecheck: PASS
 Build: PASS
 
@@ -86,9 +88,16 @@ Build: PASS
 - Refresh token encrypted at rest: PASS
 - Production OWNER/session: PASS
 - Phase 3A local sync foundation: READY
-- Remote migration `0003_commerce_sync.sql`: PENDING AUTHORIZATION
-- Production deployment of Phase 3A: NOT DONE
-- Real product/order sync: NOT EXECUTED
+- Remote migration `0003_commerce_sync.sql`: APPLIED
+- Production deployment of Phase 3B: PASS
+- Mercado Livre API real: VERIFIED
+- Products request: VERIFIED
+- Orders request: VERIFIED
+- Sync job real: SUCCESS
+- Products returned: 0
+- Orders returned: 0
+- Real-data persistence: NOT VERIFIED
+- Reason: connected seller account contains no listings/orders
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -100,4 +109,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Review and authorize remote application of `migrations/0003_commerce_sync.sql`; then deploy and test a real sync. Do not implement Claims, Returns, ReturnShield, IA, Queue, or Cron.
+Phase 4 — Claims + Returns Foundation. Do not start this phase yet.

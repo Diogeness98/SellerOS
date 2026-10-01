@@ -140,6 +140,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         clientSecret: env.MERCADOLIVRE_CLIENT_SECRET,
         tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,
       }).sync(session.workspaceId)
+      if (result.status === 'FAILED') return error('SYNC_FAILED', 'Mercado Livre sync could not be completed', 502)
       return json(result)
     } catch (cause) {
       if (cause instanceof SyncError && cause.code === 'SYNC_IN_PROGRESS') return error('SYNC_IN_PROGRESS', 'A sync is already running', 409)

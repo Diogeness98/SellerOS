@@ -3,6 +3,7 @@ import { decryptToken, encryptToken } from '../worker/crypto'
 import { MercadoLivreSyncService, SyncError } from '../worker/sync'
 import { handleRequest } from '../worker/api'
 import { createSession, createSessionToken } from '../shared/auth'
+import { syncOutcomeMessage } from '../apps/web/src/App'
 import type { D1Database, D1Result, D1Statement, Env } from '../worker/types'
 
 type Integration = { id: string; workspace_id: string; status: string; external_account_id: string | null; access_token_encrypted: string | null; refresh_token_encrypted: string | null; token_expires_at: string | null; last_sync_at: string | null }
@@ -102,7 +103,7 @@ async function connectedIntegration(overrides: Partial<Integration> = {}): Promi
 function product(id = 'MLB1', price = 10) { return { id, title: `Product ${id}`, status: 'active', category_id: 'MLB1', currency_id: 'BRL', price, seller_custom_field: 'SKU-1', date_created: '2026-01-01T00:00:00.000Z', last_updated: '2026-09-01T00:00:00.000Z' } }
 function order(id = '123', status = 'paid') { return { id, status, currency_id: 'BRL', total_amount: 10, paid_amount: 10, date_created: '2026-09-01T00:00:00.000Z', date_last_updated: '2026-09-02T00:00:00.000Z', order_items: [{ item: { id: 'MLB1', title: 'Product MLB1', seller_sku: 'SKU-1' }, quantity: 1, unit_price: 10, currency_id: 'BRL' }] } }
 
-function mercadoLivreFetch(products: ReturnType<typeof product>[], orders: ReturnType<typeof order>[], options: { failProducts?: boolean; refresh?: boolean } = {}) {
+function mercadoLivreFetch(products: ReturnType<typeof product>[], orders: ReturnType<typeof order>[], options: { failProducts?: boolean; failOrders?: boolean; refresh?: boolean } = {}) {
   return vi.fn(async (input: string | URL) => {
     const url = String(input)
     if (url.endsWith('/oauth/token')) return new Response(JSON.stringify({ access_token: 'new-access-token', refresh_token: 'new-refresh-token', expires_in: 21600 }), { status: 200 })
@@ -111,7 +112,10 @@ function mercadoLivreFetch(products: ReturnType<typeof product>[], orders: Retur
       return new Response(JSON.stringify({ results: products.map((value) => value.id), paging: { total: products.length, limit: 100, offset: 0 } }), { status: 200 })
     }
     if (url.includes('/items/bulk')) return new Response(JSON.stringify(products.map((value) => ({ status_code: 200, body: value }))), { status: 200 })
-    if (url.includes('/orders/search')) return new Response(JSON.stringify({ results: orders, paging: { total: orders.length, limit: 50, offset: 0 } }), { status: 200 })
+    if (url.includes('/orders/search')) {
+      if (options.failOrders) return new Response('{}', { status: 500 })
+      return new Response(JSON.stringify({ results: orders, paging: { total: orders.length, limit: 50, offset: 0 } }), { status: 200 })
+    }
     throw new Error(`Unexpected URL: ${url}`)
   }) as unknown as typeof fetch
 }
@@ -121,6 +125,12 @@ function service(db: FakeSyncDb, fetcher: typeof fetch) {
 }
 
 describe('Mercado Livre commerce sync foundation', () => {
+  it('completes a zero-data sync successfully', async () => {
+    const db = new FakeSyncDb(); db.integrations.push(await connectedIntegration())
+    const result = await service(db, mercadoLivreFetch([], [])).sync('workspace-a')
+    expect(result).toMatchObject({ status: 'SUCCESS', products: 0, orders: 0, created: 0, updated: 0, failed: 0 })
+  })
+
   it('creates products and orders on the first sync', async () => {
     const db = new FakeSyncDb(); db.integrations.push(await connectedIntegration())
     const result = await service(db, mercadoLivreFetch([product()], [order()])).sync('workspace-a')
@@ -191,6 +201,18 @@ describe('Mercado Livre commerce sync foundation', () => {
     expect(result).toMatchObject({ status: 'PARTIAL', orders: 1 }); expect(result.failed).toBeGreaterThan(0)
   })
 
+  it('does not mask a failed sync as an HTTP success', async () => {
+    const db = new FakeSyncDb(); db.integrations.push(await connectedIntegration())
+    vi.stubGlobal('fetch', mercadoLivreFetch([], [], { failProducts: true, failOrders: true }))
+    const env: Env = { DB: db, SESSION_SECRET: 'test-session-secret-with-at-least-32-chars', MERCADOLIVRE_CLIENT_ID: 'client-id', MERCADOLIVRE_CLIENT_SECRET: 'client-secret', TOKEN_ENCRYPTION_KEY: tokenKey }
+    const session = await createSessionToken(createSession('user-1', 'workspace-a', 'OWNER'), env.SESSION_SECRET)
+    const response = await handleRequest(new Request('https://selleros.xxx/api/integrations/mercadolivre/sync', { method: 'POST', headers: { cookie: `selleros_session=${session}` } }), env)
+    expect(response.status).toBe(502)
+    expect(await response.json()).toMatchObject({ error: { code: 'SYNC_FAILED' } })
+    expect(db.jobs[0].status).toBe('FAILED')
+    vi.unstubAllGlobals()
+  })
+
   it('blocks a second concurrent sync for the same integration', async () => {
     const db = new FakeSyncDb(); db.integrations.push(await connectedIntegration()); db.jobs.push({ id: 'running', workspace_id: 'workspace-a', integration_id: 'integration-a', type: 'COMMERCE_SYNC', status: 'RUNNING', finished_at: null, records_seen: 0, records_created: 0, records_updated: 0, records_failed: 0 })
     await expect(service(db, mercadoLivreFetch([], [])).sync('workspace-a')).rejects.toMatchObject({ code: 'SYNC_IN_PROGRESS' } satisfies Partial<SyncError>)
@@ -217,5 +239,11 @@ describe('Mercado Livre commerce sync foundation', () => {
     const body = JSON.stringify(await response.json())
     expect(response.status).toBe(200); expect(body).not.toContain('access_token'); expect(body).not.toContain('refresh_token'); expect(body).not.toContain('valid-access-token')
     vi.unstubAllGlobals()
+  })
+
+  it('selects safe UI messages for zero-data, partial, and failed syncs', () => {
+    expect(syncOutcomeMessage({ status: 'SUCCESS', products: 0, orders: 0 })).toBe('Sincronização concluída. Nenhum anúncio ou pedido foi encontrado nesta conta.')
+    expect(syncOutcomeMessage({ status: 'PARTIAL', products: 1, orders: 0 })).toBe('Sincronização concluída parcialmente.')
+    expect(syncOutcomeMessage({ status: 'FAILED', products: 0, orders: 0 })).toBe('Não foi possível concluir a sincronização.')
   })
 })

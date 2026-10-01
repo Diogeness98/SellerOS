@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 8 — MVP Final Audit
+Phase 9 — ReturnShield Validation & ROI Engine
 
 ## Status
-PASS — MVP_READY_FOR_REAL_VALIDATION
+PARTIAL — DEPLOYED / WAITING FOR REAL SELLER DATA
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -45,7 +45,7 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - Defense Copilot foundation using Evidence Pack and deterministic risk as the sole AI source of truth.
 
 ## Database
-Latest migration: `migrations/0007_rate_limits.sql` (APPLIED)
+Latest migration: `migrations/0008_validation_roi.sql` (APPLIED)
 
 ## Relevant Routes
 - `GET /api/health`
@@ -68,7 +68,7 @@ Latest migration: `migrations/0007_rate_limits.sql` (APPLIED)
 - `POST /api/returnshield/cases/:externalClaimId/defense-analysis`
 
 ## Tests
-68 PASS, 0 FAIL
+70 PASS, 0 FAIL
 Typecheck: PASS
 Build: PASS
 
@@ -179,4 +179,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-REAL SELLER VALIDATION.
+REAL SELLER VALIDATION — populate real claims, reputation signals, evidence and financial outcomes.

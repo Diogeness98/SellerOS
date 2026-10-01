@@ -9,6 +9,7 @@ import { downloadEvidenceAsset, EvidenceError, EvidenceSyncService, getEvidenceP
 import { OpenAIProvider } from './ai-provider'
 import { DefenseCopilotService, DefenseError } from './defense'
 import { takeRateLimit } from './rate-limit'
+import { getValidationDashboard, recordValidationEvent } from './validation'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
@@ -127,10 +128,10 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       const accessTokenEncrypted = await encryptToken(token.access_token, config.tokenEncryptionKey)
       const refreshTokenEncrypted = await encryptToken(token.refresh_token, config.tokenEncryptionKey)
       const tokenExpiresAt = new Date(Date.now() + token.expires_in * 1000).toISOString()
-      await env.DB.prepare(`INSERT INTO integrations (id, workspace_id, channel, status, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes)
-        VALUES (?1, ?2, 'MERCADOLIVRE', 'CONNECTED', ?3, ?4, ?5, ?6, ?7)
-        ON CONFLICT(workspace_id, channel) DO UPDATE SET status = 'CONNECTED', external_account_id = excluded.external_account_id, access_token_encrypted = excluded.access_token_encrypted, refresh_token_encrypted = excluded.refresh_token_encrypted, token_expires_at = excluded.token_expires_at, scopes = excluded.scopes, updated_at = datetime('now')`)
-        .bind(crypto.randomUUID(), session.workspaceId, user.id, accessTokenEncrypted, refreshTokenEncrypted, tokenExpiresAt, token.scope ?? null)
+      await env.DB.prepare(`INSERT INTO integrations (id, workspace_id, channel, status, external_account_id, access_token_encrypted, refresh_token_encrypted, token_expires_at, scopes, oauth_completed_at)
+        VALUES (?1, ?2, 'MERCADOLIVRE', 'CONNECTED', ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(workspace_id, channel) DO UPDATE SET status = 'CONNECTED', external_account_id = excluded.external_account_id, access_token_encrypted = excluded.access_token_encrypted, refresh_token_encrypted = excluded.refresh_token_encrypted, token_expires_at = excluded.token_expires_at, scopes = excluded.scopes, oauth_completed_at = COALESCE(integrations.oauth_completed_at, excluded.oauth_completed_at), updated_at = datetime('now')`)
+        .bind(crypto.randomUUID(), session.workspaceId, user.id, accessTokenEncrypted, refreshTokenEncrypted, tokenExpiresAt, token.scope ?? null, new Date().toISOString())
         .run()
       return Response.redirect(new URL('/?mercadolivre=connected', url.origin).toString(), 302)
     } catch (cause) {
@@ -154,6 +155,14 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const session = await readSession(request, env.SESSION_SECRET)
     if (!session) return error('FORBIDDEN', 'Authentication required', 403)
     return json(await getReturnShieldDashboard(env.DB, session.workspaceId))
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/returnshield/validation') {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    const result = await getValidationDashboard(env.DB, session.workspaceId)
+    await recordValidationEvent(env.DB, session.workspaceId, 'money_at_risk_viewed', { actionCases: result.actionQueue.length })
+    return json(result)
   }
 
   const evidencePackMatch = url.pathname.match(/^\/api\/returnshield\/cases\/([^/]+)\/evidence-pack$/)

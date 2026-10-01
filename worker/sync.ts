@@ -160,6 +160,8 @@ export class MercadoLivreSyncService {
       throw new SyncError('SYNC_IN_PROGRESS')
     }
 
+    await this.input.db.prepare("UPDATE integrations SET first_sync_started_at = COALESCE(first_sync_started_at, ?1), updated_at = datetime('now') WHERE id = ?2").bind(startedAt, integration.id).run()
+
     const products = emptyCounts()
     const orders = emptyCounts()
     const claims = emptyCounts()
@@ -198,7 +200,7 @@ export class MercadoLivreSyncService {
     await this.input.db.prepare("UPDATE sync_jobs SET status = ?1, finished_at = ?2, records_seen = ?3, records_created = ?4, records_updated = ?5, records_failed = ?6, error_summary = ?7 WHERE id = ?8")
       .bind(status, finishedAt, seen, created, updated, failed, failures.length ? `${failures.join(', ')} sync failed` : null, jobId)
       .run()
-    if (status !== 'FAILED') await this.input.db.prepare("UPDATE integrations SET last_sync_at = ?1, updated_at = datetime('now') WHERE id = ?2").bind(finishedAt, integration.id).run()
+    if (status !== 'FAILED') await this.input.db.prepare("UPDATE integrations SET last_sync_at = ?1, first_sync_completed_at = COALESCE(first_sync_completed_at, ?1), updated_at = datetime('now') WHERE id = ?2").bind(finishedAt, integration.id).run()
     return { jobId, status, products: products.seen, orders: orders.seen, claims: claims.seen, returns: returns.seen, created, updated, failed, startedAt, finishedAt }
   }
 

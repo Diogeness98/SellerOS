@@ -4,6 +4,7 @@ type Session = { authenticated: boolean; user?: { id: string; email: string }; w
 type Integration = { connected: boolean; externalAccountId: string | null; lastSyncAt: string | null }
 type PriorityCase = { externalClaimId: string; externalOrderId: string | null; estimatedExposure: number | null; currencyId: string | null; amountKnown: boolean; deadlineAt: string | null; hoursToDeadline: number | null; riskScore: number; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'; hasReturn: boolean; overdue: boolean; title: string | null; problem: string | null; reasons: string[] }
 type Dashboard = { moneyAtRisk: { currency: 'BRL'; estimatedAmount: number; pricedCases: number; unpricedCases: number }; openCases: number; criticalCases: number; highCases: number; overdueCases: number; dueToday: number; casesWithReturns: number; priorityCases: PriorityCase[] }
+type Validation = { actionQueue: Array<{ externalClaimId: string; priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'; actionPriorityScore: number; estimatedExposure: number | null; currencyId: string | null; deadlineAt: string | null; reputationImpact: string; evidenceReadiness: number; requiredAction: string | null; title: string | null }>; reputationShield: { affectedCases: number; dueToday: number; associatedAtRisk: number }; impact: { currency: 'BRL'; monitoredCents: number; recoveredCents: number; protectedCents: number; lostCents: number; pendingCases: number }; firstValue: { moneyAtRisk: number; openCases: number; criticalCases: number; actionCases: number } }
 type EvidencePack = { externalClaimId: string; claim: { status: string | null; type: string | null; stage: string | null; reasonId: string | null; title: string | null; problem: string | null; dueDate: string | null; createdAt: string | null; updatedAt: string | null }; order: { externalOrderId: string; status: string | null; currencyId: string | null; totalAmount: number | null; paidAmount: number | null; createdAt: string | null } | null; items: Array<{ externalItemId: string; title: string | null; sellerSku: string | null; quantity: number; unitPrice: number | null; productStatus: string | null; categoryId: string | null }>; returns: Array<{ externalReturnId: string; status: string | null; subtype: string | null; refundAt: string | null; closedAt: string | null }>; messages: Array<{ senderRole: string | null; receiverRole: string | null; messageText: string | null; messageDate: string | null }>; assets: Array<{ externalId: string; originalFilename: string | null; mimeType: string | null; sizeBytes: number | null; createdAt: string | null }>; timeline: Array<{ type: string; at: string; source: string; summary: string }>; missingEvidence: string[] }
 type DefenseAnalysis = { summary: string; riskExplanation: string; keyFacts: Array<{ text: string; sourceRefs: string[] }>; inconsistencies: Array<{ text: string; sourceRefs: string[] }>; evidenceSuggestions: string[]; recommendedResponse: string; confidence: number }
 export type SyncResult = { jobId: string; status: 'SUCCESS' | 'PARTIAL' | 'FAILED'; products: number; orders: number; claims: number; returns: number; created: number; updated: number; failed: number; startedAt: string; finishedAt: string }
@@ -40,6 +41,7 @@ export function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [integration, setIntegration] = useState<Integration | null>(null)
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
+  const [validation, setValidation] = useState<Validation | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
@@ -82,6 +84,11 @@ export function App() {
     setDashboard(await response.json() as Dashboard)
   }
 
+  async function loadValidation() {
+    const response = await fetch('/api/returnshield/validation', { credentials: 'include' })
+    if (response.ok) setValidation(await response.json() as Validation)
+  }
+
   useEffect(() => {
     void restoreSession().catch(() => setSession({ authenticated: false }))
   }, [])
@@ -90,9 +97,11 @@ export function App() {
     if (session?.authenticated) {
       void loadIntegration().catch(() => setIntegration(null))
       void loadDashboard().catch(() => setDashboard(null))
+      void loadValidation().catch(() => setValidation(null))
     } else {
       setIntegration(null)
       setDashboard(null)
+      setValidation(null)
     }
   }, [session?.authenticated])
 
@@ -144,6 +153,7 @@ export function App() {
       setSyncOutcome(syncOutcomeMessage(result) ?? '')
       await loadIntegration()
       await loadDashboard()
+      await loadValidation()
     } catch {
       setSyncError('Não foi possível concluir a sincronização.')
     } finally {
@@ -227,6 +237,10 @@ export function App() {
               <article className="risk-card"><strong>{dashboard.dueToday}</strong><span>vencendo hoje</span></article>
             </div>
             <div className="priority-header"><h2>Casos prioritários</h2><span>{dashboard.casesWithReturns} com devolução</span></div>
+            {validation && <>
+              <section className="card"><h2>Ação necessária</h2>{validation.actionQueue.length ? <div className="priority-list">{validation.actionQueue.slice(0, 3).map((item) => <article className="priority-case" key={item.externalClaimId}><div><strong>#{item.externalClaimId}</strong>{item.title && <p>{item.title}</p>}</div><span className={`severity ${item.priority.toLowerCase()}`}>{item.priority}</span><p>{item.estimatedExposure !== null ? `${formatMoney(item.estimatedExposure, item.currencyId ?? 'BRL')} em risco` : 'Valor em risco indisponível'}</p><p>Evidence Readiness: {item.evidenceReadiness}%</p><p>{item.reputationImpact === 'AFFECTED' ? 'Este caso pode afetar sua reputação.' : 'Impacto reputacional: dados indisponíveis.'}</p><p>Ação recomendada: {item.requiredAction ?? 'Monitorar caso'}</p><button className="secondary evidence-button" onClick={() => void openEvidence(item.externalClaimId)}>Ver caso</button></article>)}</div> : <p className="empty-state">Tudo certo por enquanto. Continuaremos monitorando devoluções, prazos e evidências.</p>}</section>
+              <div className="risk-grid"><article className="risk-card"><span>Reputation Shield</span><strong>{validation.reputationShield.affectedCases}</strong><small>casos podem afetar sua reputação</small></article><article className="risk-card"><span>ReturnShield Impact</span><strong>{formatMoney(validation.impact.recoveredCents / 100)}</strong><small>recuperados confirmados</small></article><article className="risk-card"><span>Protegidos assistidos</span><strong>{formatMoney(validation.impact.protectedCents / 100)}</strong><small>sem atribuição causal automática</small></article></div>
+            </>}
             {returnShieldEmptyMessage(dashboard.openCases) ? <p className="empty-state">{returnShieldEmptyMessage(dashboard.openCases)}</p> : <div className="priority-list">{dashboard.priorityCases.map((riskCase) => (
               <article className="priority-case" key={riskCase.externalClaimId}>
                 <div><strong>#{riskCase.externalClaimId}</strong>{riskCase.title && <p>{riskCase.title}</p>}</div>

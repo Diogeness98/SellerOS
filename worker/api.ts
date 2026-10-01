@@ -11,6 +11,7 @@ import { DefenseCopilotService, DefenseError } from './defense'
 import { takeRateLimit } from './rate-limit'
 import { getValidationDashboard, recordValidationEvent } from './validation'
 import { hashInviteToken, validateInviteRegistration } from './invites'
+import { containsSensitiveValue, getDppGmve, getDppReadiness, initiativeDeadline, isPlatformAdmin } from './dpp'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
@@ -54,6 +55,17 @@ async function readSession(request: Request, secret: string): Promise<Session | 
   const raw = request.headers.get('cookie')?.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))?.[1]
   if (!raw) return null
   return readSessionToken(raw, secret)
+}
+
+async function readDppAdmin(request: Request, env: Env): Promise<Session | Response> {
+  const session = await readSession(request, env.SESSION_SECRET)
+  if (!session) return error('UNAUTHORIZED', 'Authentication required', 401)
+  if (!(await isPlatformAdmin(env.DB, session.userId))) return error('FORBIDDEN', 'Administrative access required', 403)
+  return session
+}
+
+async function recordDppAdminEvent(env: Env, userId: string, action: string, entityType: string, entityId: string | null) {
+  await env.DB.prepare('INSERT INTO dpp_admin_events (id, user_id, action, entity_type, entity_id) VALUES (?1, ?2, ?3, ?4, ?5)').bind(crypto.randomUUID(), userId, action, entityType, entityId).run()
 }
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
@@ -297,6 +309,67 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     await env.DB.prepare("UPDATE integrations SET status = 'DISCONNECTED', access_token_encrypted = NULL, refresh_token_encrypted = NULL, token_expires_at = NULL, updated_at = datetime('now') WHERE workspace_id = ?1 AND channel = 'MERCADOLIVRE'").bind(session.workspaceId).run()
     await env.DB.prepare("INSERT INTO audit_logs (id, workspace_id, actor_type, actor_id, action, entity_type, entity_id, source) VALUES (?1, ?2, 'USER', ?3, 'INTEGRATION_DISCONNECTED', 'INTEGRATION', 'MERCADOLIVRE', 'selleros')").bind(crypto.randomUUID(), session.workspaceId, session.userId).run()
     return json({ disconnected: true, channel: 'MERCADOLIVRE' })
+  }
+
+  if (url.pathname.startsWith('/api/admin/dpp')) {
+    const admin = await readDppAdmin(request, env)
+    if (admin instanceof Response) return admin
+
+    if (request.method === 'GET' && url.pathname === '/api/admin/dpp/readiness') return json(await getDppReadiness(env.DB, env))
+    if (request.method === 'GET' && url.pathname === '/api/admin/dpp/gmve') return json(await getDppGmve(env.DB))
+
+    if (request.method === 'GET' && url.pathname === '/api/admin/dpp/evidence') {
+      const evidence = await env.DB.prepare('SELECT id, requirement_code, evidence_type, description, reference, metadata_json, created_at FROM dpp_evidence ORDER BY created_at DESC').all()
+      return json({ evidence: evidence.results })
+    }
+    if (request.method === 'POST' && url.pathname === '/api/admin/dpp/evidence') {
+      const body = (await request.json().catch(() => null)) as { requirementCode?: string; evidenceType?: string; description?: string; reference?: string; metadata?: Record<string, unknown> } | null
+      const allowedTypes = new Set(['AUTOMATED_TEST', 'CODE_REFERENCE', 'CONFIG_REFERENCE', 'LOG_REFERENCE', 'SCREENSHOT_REFERENCE', 'DOCUMENT', 'MANUAL_REVIEW'])
+      if (!body?.requirementCode || !body.description?.trim() || !allowedTypes.has(body.evidenceType ?? '') || body.description.length > 1000 || (body.reference?.length ?? 0) > 1000 || containsSensitiveValue(`${body.description} ${body.reference ?? ''}`)) return error('VALIDATION_ERROR', 'Invalid evidence', 400)
+      const exists = await env.DB.prepare('SELECT code FROM dpp_readiness_checks WHERE code = ?1').bind(body.requirementCode).first()
+      if (!exists) return error('NOT_FOUND', 'Requirement not found', 404)
+      const id = crypto.randomUUID()
+      await env.DB.prepare('INSERT INTO dpp_evidence (id, requirement_code, evidence_type, description, reference, metadata_json, created_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)').bind(id, body.requirementCode, body.evidenceType, body.description.trim(), body.reference?.trim() || null, body.metadata ? JSON.stringify(body.metadata) : null, admin.userId).run()
+      await env.DB.prepare('UPDATE dpp_readiness_checks SET evidence_count = evidence_count + 1, updated_at = datetime(\'now\') WHERE code = ?1').bind(body.requirementCode).run()
+      await recordDppAdminEvent(env, admin.userId, 'DPP_EVIDENCE_CREATED', 'DPP_EVIDENCE', id)
+      return json({ id, created: true }, 201)
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/admin/dpp/initiatives') {
+      const initiatives = await env.DB.prepare('SELECT id, external_reference, title, description, priority, mandatory, published_at, due_at, status, source_url, evidence_id, completed_at, updated_at FROM dpp_initiatives ORDER BY due_at IS NULL, due_at').all<{ id: string; due_at: string | null }>()
+      return json({ initiatives: initiatives.results.map((initiative) => ({ ...initiative, deadline: initiativeDeadline(initiative.due_at) })) })
+    }
+    if (request.method === 'POST' && url.pathname === '/api/admin/dpp/initiatives') {
+      const body = (await request.json().catch(() => null)) as { title?: string; description?: string; priority?: string; mandatory?: boolean; publishedAt?: string; dueAt?: string; sourceUrl?: string; externalReference?: string } | null
+      const priorities = new Set(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'])
+      if (!body?.title?.trim() || body.title.length > 240 || !priorities.has(body.priority ?? '') || containsSensitiveValue(`${body.title} ${body.description ?? ''} ${body.sourceUrl ?? ''}`)) return error('VALIDATION_ERROR', 'Invalid initiative', 400)
+      const id = crypto.randomUUID()
+      await env.DB.prepare("INSERT INTO dpp_initiatives (id, external_reference, title, description, priority, mandatory, published_at, due_at, status, source_url) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'OPEN', ?9)").bind(id, body.externalReference?.slice(0, 160) || null, body.title.trim(), body.description?.trim() || null, body.priority, body.mandatory ? 1 : 0, body.publishedAt ?? null, body.dueAt ?? null, body.sourceUrl?.trim() || null).run()
+      await recordDppAdminEvent(env, admin.userId, 'DPP_INITIATIVE_CREATED', 'DPP_INITIATIVE', id)
+      return json({ id, created: true }, 201)
+    }
+    const initiativeMatch = url.pathname.match(/^\/api\/admin\/dpp\/initiatives\/([^/]+)$/)
+    if (request.method === 'PATCH' && initiativeMatch) {
+      const body = (await request.json().catch(() => null)) as { status?: string; dueAt?: string | null; evidenceId?: string | null } | null
+      const statuses = new Set(['OPEN', 'IN_PROGRESS', 'COMPLETED', 'VALIDATED', 'OVERDUE', 'NOT_APPLICABLE'])
+      if (!body?.status || !statuses.has(body.status)) return error('VALIDATION_ERROR', 'Invalid initiative update', 400)
+      const result = await env.DB.prepare("UPDATE dpp_initiatives SET status = ?1, due_at = ?2, evidence_id = ?3, completed_at = CASE WHEN ?1 IN ('COMPLETED', 'VALIDATED') THEN COALESCE(completed_at, datetime('now')) ELSE NULL END, updated_at = datetime('now') WHERE id = ?4").bind(body.status, body.dueAt ?? null, body.evidenceId ?? null, initiativeMatch[1]).run()
+      if (result.meta?.changes === 0) return error('NOT_FOUND', 'Initiative not found', 404)
+      await recordDppAdminEvent(env, admin.userId, 'DPP_INITIATIVE_UPDATED', 'DPP_INITIATIVE', initiativeMatch[1])
+      return json({ updated: true })
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/admin/dpp/export') {
+      const [readiness, gmve, evidence, initiatives, incidents] = await Promise.all([
+        getDppReadiness(env.DB, env), getDppGmve(env.DB),
+        env.DB.prepare('SELECT requirement_code, evidence_type, description, reference, created_at FROM dpp_evidence ORDER BY created_at DESC').all(),
+        env.DB.prepare('SELECT external_reference, title, priority, mandatory, published_at, due_at, status, source_url, completed_at FROM dpp_initiatives ORDER BY due_at').all(),
+        env.DB.prepare('SELECT discovered_at, systems_affected, potentially_affected_users, communication_status, resolved_at FROM dpp_incidents ORDER BY discovered_at DESC').all(),
+      ])
+      await recordDppAdminEvent(env, admin.userId, 'DPP_EXPORT_GENERATED', 'DPP_EXPORT', null)
+      return json({ generatedAt: new Date().toISOString(), application: { name: 'SellerOS / ReturnShield', country: 'MLB', certificationStatus: 'NOT_CERTIFIED' }, readiness, gmve, evidence: evidence.results, initiatives: initiatives.results, incidents: incidents.results, outstandingItems: readiness.checks.filter((check) => check.status !== 'PASS' && check.status !== 'NOT_APPLICABLE').map((check) => ({ code: check.code, status: check.status, title: check.title })) })
+    }
+    return error('NOT_FOUND', 'Administrative route not found', 404)
   }
 
   if (url.pathname.startsWith('/api/workspaces/')) {

@@ -3,6 +3,8 @@ import { isInvitePasswordValid } from '../../../shared/password-policy'
 
 type Session = { authenticated: boolean; user?: { id: string; email: string }; workspaceId?: string }
 type Integration = { connected: boolean; externalAccountId: string | null; lastSyncAt: string | null }
+type DppReadiness = { internalReadinessPercent: number; disclaimer: string; checks: Array<{ code: string; category: string; title: string; status: string; evidence_count: number }>; configuration: Array<{ code: string; value: string }> }
+type DppGmve = { health: { connected_sellers: number; active_sellers: number; healthy_sellers: number }; totalGmvBrl: number; gmveUsdEstimate: number | null; targetUsd: number; targetProgressPercent: number | null }
 type PriorityCase = { externalClaimId: string; externalOrderId: string | null; estimatedExposure: number | null; currencyId: string | null; amountKnown: boolean; deadlineAt: string | null; hoursToDeadline: number | null; riskScore: number; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'; hasReturn: boolean; overdue: boolean; title: string | null; problem: string | null; reasons: string[] }
 type Dashboard = { moneyAtRisk: { currency: 'BRL'; estimatedAmount: number; pricedCases: number; unpricedCases: number }; openCases: number; criticalCases: number; highCases: number; overdueCases: number; dueToday: number; casesWithReturns: number; priorityCases: PriorityCase[] }
 type Validation = { actionQueue: Array<{ externalClaimId: string; priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'; actionPriorityScore: number; estimatedExposure: number | null; currencyId: string | null; deadlineAt: string | null; reputationImpact: string; evidenceReadiness: number; requiredAction: string | null; title: string | null }>; reputationShield: { affectedCases: number; dueToday: number; associatedAtRisk: number }; impact: { currency: 'BRL'; monitoredCents: number; recoveredCents: number; protectedCents: number; lostCents: number; pendingCases: number }; firstValue: { moneyAtRisk: number; openCases: number; criticalCases: number; actionCases: number } }
@@ -43,6 +45,8 @@ export function App() {
   const [integration, setIntegration] = useState<Integration | null>(null)
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [validation, setValidation] = useState<Validation | null>(null)
+  const [dppReadiness, setDppReadiness] = useState<DppReadiness | null>(null)
+  const [dppGmve, setDppGmve] = useState<DppGmve | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [workspaceName, setWorkspaceName] = useState('')
@@ -93,6 +97,14 @@ export function App() {
     if (response.ok) setValidation(await response.json() as Validation)
   }
 
+  async function loadDpp() {
+    const readiness = await fetch('/api/admin/dpp/readiness', { credentials: 'include' })
+    if (!readiness.ok) { setDppReadiness(null); setDppGmve(null); return }
+    const gmve = await fetch('/api/admin/dpp/gmve', { credentials: 'include' })
+    setDppReadiness(await readiness.json() as DppReadiness)
+    if (gmve.ok) setDppGmve(await gmve.json() as DppGmve)
+  }
+
   useEffect(() => {
     void restoreSession().catch(() => setSession({ authenticated: false }))
   }, [])
@@ -107,10 +119,13 @@ export function App() {
       void loadIntegration().catch(() => setIntegration(null))
       void loadDashboard().catch(() => setDashboard(null))
       void loadValidation().catch(() => setValidation(null))
+      void loadDpp().catch(() => { setDppReadiness(null); setDppGmve(null) })
     } else {
       setIntegration(null)
       setDashboard(null)
       setValidation(null)
+      setDppReadiness(null)
+      setDppGmve(null)
     }
   }, [session?.authenticated])
 
@@ -270,6 +285,13 @@ export function App() {
         <div><span className="eyebrow">SELLEROS</span><p>{session.user.email}</p></div>
         <button className="secondary" onClick={() => void logout()}>Sair</button>
       </header>
+      {dppReadiness && <section className="card dpp-readiness" aria-labelledby="dpp-title">
+        <span className="eyebrow">ADMIN · MERCADO LIVRE</span><h1 id="dpp-title">Certification Readiness</h1>
+        <p className="notice">{dppReadiness.internalReadinessPercent}% dos controles internos verificados</p><p className="auth-help">{dppReadiness.disclaimer}</p>
+        <nav className="dpp-tabs" aria-label="Certification Readiness"><span>Overview</span><span>Security</span><span>Integration</span><span>GMVe</span><span>Evidence</span><span>Initiatives</span></nav>
+        <div className="risk-grid"><article className="risk-card"><span>Security</span><strong>{dppReadiness.checks.filter((check) => check.category === 'Security' && check.status === 'PASS').length}</strong><small>controles aprovados</small></article><article className="risk-card"><span>Sellers ativos</span><strong>{dppGmve?.health.active_sellers ?? 0}</strong><small>últimos 3 meses</small></article><article className="risk-card"><span>GMVe estimado</span><strong>{!dppGmve || dppGmve.gmveUsdEstimate === null ? 'Indisponível' : `US$ ${dppGmve.gmveUsdEstimate.toLocaleString()}`}</strong><small>{!dppGmve || dppGmve.gmveUsdEstimate === null ? 'Cotação não verificada.' : `Meta: US$ ${dppGmve.targetUsd.toLocaleString()}`}</small></article><article className="risk-card"><span>Integration Health</span><strong>{dppGmve?.health.healthy_sellers ?? 0}</strong><small>sincronizações saudáveis</small></article></div>
+        <div className="priority-list">{dppReadiness.checks.map((check) => <article className="priority-case" key={check.code}><strong>{check.title}</strong><span className={`severity ${check.status.toLowerCase()}`}>{check.status}</span><p>{check.code} · Evidências: {check.evidence_count}</p></article>)}</div>
+      </section>}
       <section className="returnshield" aria-labelledby="returnshield-title">
         <span className="eyebrow">RETURNSHIELD</span>
         <h1 id="returnshield-title">Dinheiro em risco</h1>

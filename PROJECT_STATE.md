@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 9 — ReturnShield Validation & ROI Engine
+Phase 10 — Mercado Livre DPP Certification Readiness
 
 ## Status
-PARTIAL — DEPLOYED / READY FOR REAL SELLER ONBOARDING
+LOCAL READY / REMOTE MIGRATION PENDING
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -179,7 +179,7 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-REAL SELLER VALIDATION
+REAL SELLER VALIDATION + DPP READINESS ACCUMULATION
 
 ## Phase 9.1 — Validation Seller Onboarding
 - Status: DEPLOYED / READY FOR REAL SELLER ONBOARDING
@@ -190,3 +190,9 @@ REAL SELLER VALIDATION
 - Registration foreign-key hotfix: DEPLOYED / PRODUCTION VERIFIED
 - Test seller registration: PASS
 - Real seller validation: PENDING
+
+## Phase 10 — DPP Certification Readiness
+- Status: LOCAL READY / REMOTE MIGRATION PENDING
+- Global administration: deny-by-default via explicit `platform_admins` allow-list
+- GMVe: real synchronized-order aggregation only; USD requires auditable FX data
+- Certification status: NOT CERTIFIED

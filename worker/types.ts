@@ -13,6 +13,7 @@ export interface D1Statement {
 
 export interface D1Database {
   prepare(query: string): D1Statement
+  batch?<T = unknown>(statements: D1Statement[]): Promise<D1Result<T>[]>
 }
 
 export interface Env {

@@ -44,6 +44,9 @@ export function App() {
   const [validation, setValidation] = useState<Validation | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [workspaceName, setWorkspaceName] = useState('')
+  const [passwordConfirmation, setPasswordConfirmation] = useState('')
+  const [inviteToken, setInviteToken] = useState<string | null>(null)
   const [loginError, setLoginError] = useState('')
   const [notice, setNotice] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -94,6 +97,11 @@ export function App() {
   }, [])
 
   useEffect(() => {
+    const token = new URLSearchParams(window.location.hash.slice(1)).get('invite')
+    if (token) setInviteToken(token)
+  }, [])
+
+  useEffect(() => {
     if (session?.authenticated) {
       void loadIntegration().catch(() => setIntegration(null))
       void loadDashboard().catch(() => setDashboard(null))
@@ -122,6 +130,36 @@ export function App() {
       setPassword('')
     } catch {
       setLoginError('Não foi possível entrar. Confira seus dados e tente novamente.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function registerFromInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!inviteToken) return
+    if (password !== passwordConfirmation) {
+      setLoginError('As senhas não coincidem.')
+      return
+    }
+    setSubmitting(true)
+    setLoginError('')
+    try {
+      const response = await fetch('/api/auth/register-from-invite', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ inviteToken, email, password, workspaceName }),
+      })
+      if (!response.ok) throw new Error('Invite registration failed')
+      const nextSession = await response.json() as Session
+      setSession({ authenticated: true, user: nextSession.user, workspaceId: nextSession.workspaceId })
+      setPassword('')
+      setPasswordConfirmation('')
+      setInviteToken(null)
+      history.replaceState(null, '', `${location.pathname}${location.search}`)
+    } catch {
+      setLoginError('Não foi possível criar este acesso. Verifique o convite e tente novamente.')
     } finally {
       setSubmitting(false)
     }
@@ -206,12 +244,15 @@ export function App() {
       <main className="shell auth-shell">
         <section className="card auth-card" aria-labelledby="title">
           <span className="eyebrow">SELLEROS</span>
-          <h1 id="title">Entrar</h1>
-          <form onSubmit={login}>
+          <h1 id="title">{inviteToken ? 'Acesso de teste' : 'Entrar'}</h1>
+          <form onSubmit={inviteToken ? registerFromInvite : login}>
+            {inviteToken && <><p className="auth-help">Crie seu acesso para conectar sua conta do Mercado Livre e testar o ReturnShield.</p><label>Nome da operação<input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} autoComplete="organization" maxLength={120} required /></label></>}
             <label>E-mail<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label>
-            <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>
+            <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={inviteToken ? 'new-password' : 'current-password'} minLength={inviteToken ? 10 : undefined} required /></label>
+            {inviteToken && <label>Confirmar senha<input type="password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} autoComplete="new-password" minLength={10} required /></label>}
             {loginError && <p className="error" role="alert">{loginError}</p>}
-            <button type="submit" disabled={submitting}>{submitting ? 'Entrando…' : 'Entrar'}</button>
+            {inviteToken && <p className="auth-help">Seu Mercado Livre será conectado somente depois que você autorizar.</p>}
+            <button type="submit" disabled={submitting}>{submitting ? 'Processando…' : inviteToken ? 'Criar acesso e continuar' : 'Entrar'}</button>
           </form>
         </section>
       </main>
@@ -282,7 +323,10 @@ export function App() {
             {!syncResult && integration.lastSyncAt && <p className="sync-summary">Última sincronização: {new Date(integration.lastSyncAt).toLocaleString()}</p>}
           </>
         ) : (
-          <div className="status" role="status"><span className="dot muted" /> Mercado Livre desconectado</div>
+          <>
+            <div className="status" role="status"><span className="dot muted" /> Mercado Livre desconectado</div>
+            <section className="onboarding" aria-label="Próximos passos"><strong>PASSO 1 DE 3 · Conecte seu Mercado Livre</strong><p>Autorize a leitura dos dados da sua conta para o ReturnShield identificar pedidos, reclamações, devoluções e valores em risco.</p><ol><li>Conecte sua conta Mercado Livre.</li><li>Sincronize os dados disponíveis.</li><li>Ver resultados.</li></ol></section>
+          </>
         )}
         {notice && <p className="notice" role="status">{notice}</p>}
         {!integration?.connected && <button onClick={() => window.location.assign('/api/integrations/mercadolivre/connect')}>Conectar Mercado Livre</button>}

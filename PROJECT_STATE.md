@@ -4,7 +4,7 @@
 Phase 9 — ReturnShield Validation & ROI Engine
 
 ## Status
-PARTIAL — DEPLOYED / WAITING FOR REAL SELLER DATA
+PARTIAL — DEPLOYED / READY FOR REAL SELLER ONBOARDING
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -179,4 +179,11 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-REAL SELLER VALIDATION — populate real claims, reputation signals, evidence and financial outcomes.
+REAL SELLER VALIDATION
+
+## Phase 9.1 — Validation Seller Onboarding
+- Status: LOCAL READY / REMOTE MIGRATION PENDING
+- One-time invite flow: READY
+- Registration isolation: PASS (local tests)
+- Automatic session creation: PASS (local tests)
+- Real seller validation: PENDING

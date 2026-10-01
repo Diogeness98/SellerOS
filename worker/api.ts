@@ -1,4 +1,4 @@
-import { canAccessWorkspace, canManageWorkspace, canOperateWorkspace, createSession, createSessionToken, readSessionToken, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, verifyPassword } from '../shared/auth'
+import { canAccessWorkspace, canManageWorkspace, canOperateWorkspace, createSession, createSessionToken, hashPassword, readSessionToken, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, verifyPassword } from '../shared/auth'
 import type { Role, Session } from '../shared/types'
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from '../shared/oauth'
 import { encryptToken } from './crypto'
@@ -10,6 +10,7 @@ import { OpenAIProvider } from './ai-provider'
 import { DefenseCopilotService, DefenseError } from './defense'
 import { takeRateLimit } from './rate-limit'
 import { getValidationDashboard, recordValidationEvent } from './validation'
+import { hashInviteToken, validateInviteRegistration } from './invites'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
@@ -18,6 +19,7 @@ type MembershipRow = { workspace_id: string; role: Role }
 type OAuthAttemptRow = { state: string; user_id: string; workspace_id: string; code_verifier: string; expires_at: string; consumed_at: string | null }
 type IntegrationRow = { id: string; workspace_id: string; channel: string; status: string; external_account_id: string | null; token_expires_at: string | null; last_sync_at: string | null }
 type SyncJobRow = { id: string; status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'PARTIAL' | 'FAILED'; records_seen: number; records_created: number; records_updated: number; records_failed: number; started_at: string | null; finished_at: string | null }
+type InviteRow = { id: string; expires_at: string; used_at: string | null }
 
 const json = (body: unknown, status = 200, requestId = crypto.randomUUID()) =>
   new Response(JSON.stringify(body), {
@@ -89,6 +91,32 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return new Response(JSON.stringify({ user: { id: user.id, email: user.email }, workspaceId: membership.workspace_id }), {
       headers: { 'content-type': 'application/json', 'set-cookie': `${SESSION_COOKIE}=${encoded}; Max-Age=${SESSION_COOKIE_MAX_AGE}; Expires=${expires}; HttpOnly; Secure; SameSite=Lax; Path=/` },
     })
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/auth/register-from-invite') {
+    const body = (await request.json().catch(() => null)) as { inviteToken?: string; email?: string; password?: string; workspaceName?: string } | null
+    if (!body?.inviteToken || !body.email || !body.password || !body.workspaceName) return error('REGISTRATION_FAILED', 'Não foi possível criar este acesso.', 400)
+    const input = { inviteToken: body.inviteToken, email: body.email.trim().toLowerCase(), password: body.password, workspaceName: body.workspaceName.trim() }
+    const validation = validateInviteRegistration(input)
+    if (validation) return error(validation, 'Não foi possível criar este acesso.', 400)
+    const source = request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown'
+    if (!(await withinRateLimit(env, request, 'invite-registration', source, 5, 15 * 60 * 1000))) return error('RATE_LIMITED', 'Too many requests', 429)
+    const invite = await env.DB.prepare('SELECT id, expires_at, used_at FROM validation_invites WHERE token_hash = ?1').bind(await hashInviteToken(input.inviteToken)).first<InviteRow>()
+    if (!invite || invite.used_at || new Date(invite.expires_at).getTime() <= Date.now()) return error('INVITE_INVALID', 'Não foi possível criar este acesso.', 400)
+    if (await env.DB.prepare('SELECT id FROM users WHERE email = ?1').bind(input.email).first()) return error('REGISTRATION_FAILED', 'Não foi possível criar este acesso.', 400)
+    if (!env.DB.batch) return error('CONFIGURATION_ERROR', 'Registration is temporarily unavailable', 503)
+    const userId = crypto.randomUUID(); const workspaceId = crypto.randomUUID(); const now = new Date().toISOString(); const passwordHash = await hashPassword(input.password)
+    const results = await env.DB.batch([
+      env.DB.prepare('UPDATE validation_invites SET used_at = ?1, used_by_user_id = ?2 WHERE id = ?3 AND used_at IS NULL AND expires_at > ?1').bind(now, userId, invite.id),
+      env.DB.prepare('INSERT INTO users (id, email, password_hash) SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM validation_invites WHERE id = ?4 AND used_by_user_id = ?5 AND used_at = ?6)').bind(userId, input.email, passwordHash, invite.id, userId, now),
+      env.DB.prepare('INSERT INTO workspaces (id, name) SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM validation_invites WHERE id = ?3 AND used_by_user_id = ?4 AND used_at = ?5)').bind(workspaceId, input.workspaceName, invite.id, userId, now),
+      env.DB.prepare("INSERT INTO workspace_members (workspace_id, user_id, role) SELECT ?1, ?2, 'OWNER' WHERE EXISTS (SELECT 1 FROM validation_invites WHERE id = ?3 AND used_by_user_id = ?4 AND used_at = ?5)").bind(workspaceId, userId, invite.id, userId, now),
+      env.DB.prepare("INSERT INTO audit_logs (id, workspace_id, actor_type, actor_id, action, entity_type, entity_id, source) SELECT ?1, ?2, 'USER', ?3, 'VALIDATION_SELLER_REGISTERED', 'USER', ?3, 'selleros' WHERE EXISTS (SELECT 1 FROM validation_invites WHERE id = ?4 AND used_by_user_id = ?5 AND used_at = ?6)").bind(crypto.randomUUID(), workspaceId, userId, invite.id, userId, now),
+      env.DB.prepare("INSERT INTO validation_events (id, workspace_id, event_name, metadata_json) SELECT ?1, ?2, 'validation_signup_completed', '{}' WHERE EXISTS (SELECT 1 FROM validation_invites WHERE id = ?3 AND used_by_user_id = ?4 AND used_at = ?5)").bind(crypto.randomUUID(), workspaceId, invite.id, userId, now),
+    ])
+    if (results[0]?.meta?.changes !== 1) return error('INVITE_INVALID', 'Não foi possível criar este acesso.', 400)
+    const session = createSession(userId, workspaceId, 'OWNER'); const encoded = await createSessionToken(session, env.SESSION_SECRET); const expires = new Date(Date.now() + SESSION_COOKIE_MAX_AGE * 1000).toUTCString()
+    return new Response(JSON.stringify({ user: { id: userId, email: input.email }, workspaceId }), { status: 201, headers: { 'content-type': 'application/json', 'set-cookie': `${SESSION_COOKIE}=${encoded}; Max-Age=${SESSION_COOKIE_MAX_AGE}; Expires=${expires}; HttpOnly; Secure; SameSite=Lax; Path=/` } })
   }
 
   if (request.method === 'GET' && url.pathname === '/api/integrations/mercadolivre/connect') {

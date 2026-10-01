@@ -182,8 +182,9 @@ Production smoke test after Phase 2B.3 deploy: PASS
 REAL SELLER VALIDATION
 
 ## Phase 9.1 — Validation Seller Onboarding
-- Status: LOCAL READY / REMOTE MIGRATION PENDING
-- One-time invite flow: READY
-- Registration isolation: PASS (local tests)
-- Automatic session creation: PASS (local tests)
+- Status: DEPLOYED / READY FOR REAL SELLER ONBOARDING
+- Migration `0009_validation_invites.sql`: APPLIED
+- One-time invite flow: DEPLOYED
+- Registration isolation: PASS
+- Automatic session creation: PASS
 - Real seller validation: PENDING

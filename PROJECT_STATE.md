@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 7 — Defense Copilot
+Phase 8 — MVP Final Audit
 
 ## Status
-PASS — PRODUCTION_DEPLOYED / OPENAI_API_VERIFIED / ZERO_DATA_ACCOUNT
+PASS — MVP_READY_FOR_REAL_VALIDATION
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -45,7 +45,7 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - Defense Copilot foundation using Evidence Pack and deterministic risk as the sole AI source of truth.
 
 ## Database
-Latest migration: `migrations/0006_defense_copilot.sql` (APPLIED)
+Latest migration: `migrations/0007_rate_limits.sql` (APPLIED)
 
 ## Relevant Routes
 - `GET /api/health`
@@ -68,7 +68,7 @@ Latest migration: `migrations/0006_defense_copilot.sql` (APPLIED)
 - `POST /api/returnshield/cases/:externalClaimId/defense-analysis`
 
 ## Tests
-62 PASS, 0 FAIL
+68 PASS, 0 FAIL
 Typecheck: PASS
 Build: PASS
 
@@ -157,6 +157,17 @@ Build: PASS
 - PII exposure: NO
 - Marketplace Execution: NONE
 - Real Defense Analysis: PENDING REAL CLAIM DATA
+- Phase 8 security audit: PASS
+- Workspace isolation audit: PASS
+- RBAC audit: PASS
+- Same-origin mutation protection: PASS
+- Persistent D1 rate limiting: PASS
+- OpenAI timeout protection: PASS
+- Stale Defense Copilot analysis recovery: PASS
+- Migration `0007_rate_limits.sql`: APPLIED
+- Secret exposure: NONE
+- PII exposure: NONE
+- Real claim end-to-end: PENDING REAL SELLER DATA
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -168,4 +179,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Phase 8 — MVP Final Audit + Production Readiness.
+REAL SELLER VALIDATION.

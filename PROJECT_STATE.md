@@ -4,7 +4,7 @@
 Phase 10 — Mercado Livre DPP Certification Readiness
 
 ## Status
-LOCAL READY / REMOTE MIGRATION PENDING
+PARTIAL — DEPLOYED / DPP READINESS ACCUMULATION
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -45,7 +45,7 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - Defense Copilot foundation using Evidence Pack and deterministic risk as the sole AI source of truth.
 
 ## Database
-Latest migration: `migrations/0008_validation_roi.sql` (APPLIED)
+Latest migration: `migrations/0010_dpp_certification_readiness.sql` (APPLIED)
 
 ## Relevant Routes
 - `GET /api/health`
@@ -192,7 +192,13 @@ REAL SELLER VALIDATION + DPP READINESS ACCUMULATION
 - Real seller validation: PENDING
 
 ## Phase 10 — DPP Certification Readiness
-- Status: LOCAL READY / REMOTE MIGRATION PENDING
+- Status: PARTIAL — DEPLOYED / DPP READINESS ACCUMULATION
 - Global administration: deny-by-default via explicit `platform_admins` allow-list
 - GMVe: real synchronized-order aggregation only; USD requires auditable FX data
 - Certification status: NOT CERTIFIED
+- DPP migration 0010: APPLIED
+- Readiness checks: DEPLOYED
+- Evidence Vault and Initiative Tracker: DEPLOYED (admin-only)
+- DPP export: DEPLOYED (admin-only, sanitized)
+- Production global admin: NOT CONFIGURED
+- Webhook external authentication: NEEDS REVIEW

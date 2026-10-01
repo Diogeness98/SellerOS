@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 5A — ReturnShield Core
+Phase 5 — ReturnShield Core
 
 ## Status
-LOCAL READY / DEPLOY PENDING
+PASS — PRODUCTION_VERIFIED / ZERO_DATA_ACCOUNT
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -110,12 +110,15 @@ Build: PASS
 - Read-only integration: PASS
 - Real-data persistence: NOT VERIFIED
 - Reason: connected seller account contains no orders, claims, or returns
-- Money at Risk V1: READY
-- Risk Engine V1: READY
-- Deterministic prioritization: READY
-- ReturnShield dashboard API: READY
-- ReturnShield dashboard UI: READY
+- Money at Risk V1: DEPLOYED
+- Risk Engine V1: DEPLOYED
+- Deadline engine: DEPLOYED
+- Prioritization: DEPLOYED
+- ReturnShield dashboard API: DEPLOYED
+- ReturnShield dashboard UI: DEPLOYED
 - AI dependency: NONE
+- Production data: ZERO DATA ACCOUNT
+- Real risk-case calculation: PENDING REAL CLAIM DATA
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -127,4 +130,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Phase 5B — deploy and production zero-data verification.
+Phase 6 — Evidence Pack.

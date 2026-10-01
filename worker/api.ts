@@ -34,7 +34,7 @@ const mercadoLivreConfig = (env: Env) => ({
 })
 
 const evidenceInput = (env: Env) => ({ db: env.DB, clientId: env.MERCADOLIVRE_CLIENT_ID, clientSecret: env.MERCADOLIVRE_CLIENT_SECRET, tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY })
-const defenseService = (env: Env) => env.OPENAI_API_KEY ? new DefenseCopilotService(env.DB, new OpenAIProvider(env.OPENAI_API_KEY), env.OPENAI_MODEL ?? 'gpt-6-luna') : null
+const defenseService = (env: Env) => env.OPENAI_API_KEY && env.OPENAI_MODEL ? new DefenseCopilotService(env.DB, new OpenAIProvider(env.OPENAI_API_KEY), env.OPENAI_MODEL) : null
 
 async function readSession(request: Request, secret: string): Promise<Session | null> {
   const raw = request.headers.get('cookie')?.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))?.[1]

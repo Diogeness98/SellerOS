@@ -38,30 +38,30 @@ describe('Defense Copilot Foundation', () => {
   it('uses Responses API with structured output, store false, and no tools', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ output_text: JSON.stringify(valid), usage: { input_tokens: 12, output_tokens: 34 } })))
     const provider = new OpenAIProvider('test-key', fetcher as unknown as typeof fetch)
-    const result = await provider.generateStructured({ instructions: 'system', input: { evidence: 'data' }, model: 'gpt-6-luna' }, { type: 'object' })
+    const result = await provider.generateStructured({ instructions: 'system', input: { evidence: 'data' }, model: 'gpt-5.6-luna' }, { type: 'object' })
     const body = JSON.parse(String(fetcher.mock.calls[0][1]?.body))
     expect(String(fetcher.mock.calls[0][0])).toBe('https://api.openai.com/v1/responses')
-    expect(body).toMatchObject({ store: false, tools: [], max_output_tokens: 1400, model: 'gpt-6-luna' })
+    expect(body).toMatchObject({ store: false, tools: [], max_output_tokens: 1400, model: 'gpt-5.6-luna' })
     expect(result.inputUnits).toBe(12)
   })
 
   it('validates refs, caches successful analysis, and records usage without recalculating risk', async () => {
-    const db = new Db(); const provider = new FakeAIProvider(valid); const service = new DefenseCopilotService(db, provider, 'gpt-6-luna')
+    const db = new Db(); const provider = new FakeAIProvider(valid); const service = new DefenseCopilotService(db, provider, 'gpt-5.6-luna')
     const first = await service.analyze('workspace-a', 'claim-1'); const second = await service.analyze('workspace-a', 'claim-1')
     expect(first.analysis.keyFacts[0].sourceRefs).toEqual(['claim.status']); expect(second.cacheHit).toBe(true); expect(provider.calls).toBe(1); expect(db.usage).toBe(2)
   })
 
   it('blocks RUNNING work, changes cache by model, and limits invalid output repair to one retry', async () => {
     const db = new Db(); db.analyses.push({ id: 'running', status: 'RUNNING', output_json: null })
-    await expect(new DefenseCopilotService(db, new FakeAIProvider(valid), 'gpt-6-luna').analyze('workspace-a', 'claim-1')).rejects.toMatchObject({ code: 'ANALYSIS_IN_PROGRESS' } satisfies Partial<DefenseError>)
+    await expect(new DefenseCopilotService(db, new FakeAIProvider(valid), 'gpt-5.6-luna').analyze('workspace-a', 'claim-1')).rejects.toMatchObject({ code: 'ANALYSIS_IN_PROGRESS' } satisfies Partial<DefenseError>)
     const bad = new FakeAIProvider({ summary: 'invalid' }); const clean = new Db()
-    await expect(new DefenseCopilotService(clean, bad, 'gpt-6-luna').analyze('workspace-a', 'claim-1')).rejects.toMatchObject({ code: 'COPILOT_UNAVAILABLE' } satisfies Partial<DefenseError>)
+    await expect(new DefenseCopilotService(clean, bad, 'gpt-5.6-luna').analyze('workspace-a', 'claim-1')).rejects.toMatchObject({ code: 'COPILOT_UNAVAILABLE' } satisfies Partial<DefenseError>)
     expect(bad.calls).toBe(2)
     const provider = new FakeAIProvider(valid); await new DefenseCopilotService(clean, provider, 'another-model').analyze('workspace-a', 'claim-1'); expect(provider.calls).toBe(1)
   })
 
   it('handles provider timeout, rate limit, and invalid provider output without exposing raw errors', async () => {
     const unavailable = { name: 'fake', generateStructured: async () => { throw new AIProviderError('AI_UNAVAILABLE') } }
-    await expect(new DefenseCopilotService(new Db(), unavailable, 'gpt-6-luna').analyze('workspace-a', 'claim-1')).rejects.toMatchObject({ code: 'COPILOT_UNAVAILABLE' } satisfies Partial<DefenseError>)
+    await expect(new DefenseCopilotService(new Db(), unavailable, 'gpt-5.6-luna').analyze('workspace-a', 'claim-1')).rejects.toMatchObject({ code: 'COPILOT_UNAVAILABLE' } satisfies Partial<DefenseError>)
   })
 })

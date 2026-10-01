@@ -140,7 +140,7 @@ Build: PASS
 - Real attachment download: PENDING REAL CLAIM DATA
 - AI Provider abstraction: READY
 - OpenAI Responses provider: READY
-- Default model: gpt-6-luna
+- Default model: gpt-5.6-luna
 - Structured output: READY
 - Prompt injection protection: READY
 - Evidence Pack source-of-truth: READY

@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 
 type Session = { authenticated: boolean; user?: { id: string; email: string }; workspaceId?: string }
 type Integration = { connected: boolean; externalAccountId: string | null; lastSyncAt: string | null }
-export type SyncResult = { jobId: string; status: 'SUCCESS' | 'PARTIAL' | 'FAILED'; products: number; orders: number; created: number; updated: number; failed: number; startedAt: string; finishedAt: string }
+export type SyncResult = { jobId: string; status: 'SUCCESS' | 'PARTIAL' | 'FAILED'; products: number; orders: number; claims: number; returns: number; created: number; updated: number; failed: number; startedAt: string; finishedAt: string }
 
 export function syncOutcomeMessage(result: Pick<SyncResult, 'status' | 'products' | 'orders'>): string | null {
   if (result.status === 'SUCCESS' && result.products === 0 && result.orders === 0) return 'Sincronização concluída. Nenhum anúncio ou pedido foi encontrado nesta conta.'
@@ -138,7 +138,7 @@ export function App() {
             <button onClick={() => void syncMercadoLivre()} disabled={syncing}>{syncing ? 'Sincronizando...' : 'Sincronizar dados'}</button>
             {syncError && <p className="error" role="alert">{syncError}</p>}
             {syncOutcome && <p className="notice" role="status">{syncOutcome}</p>}
-            {syncResult && <div className="sync-summary" role="status"><span>Produtos: {syncResult.products}</span><span>Pedidos: {syncResult.orders}</span><span>Criados: {syncResult.created}</span><span>Atualizados: {syncResult.updated}</span><span>Última sincronização: {new Date(syncResult.finishedAt).toLocaleString()}</span></div>}
+            {syncResult && <div className="sync-summary" role="status"><span>Produtos: {syncResult.products}</span><span>Pedidos: {syncResult.orders}</span><span>Reclamações: {syncResult.claims}</span><span>Devoluções: {syncResult.returns}</span><span>Criados: {syncResult.created}</span><span>Atualizados: {syncResult.updated}</span><span>Última sincronização: {new Date(syncResult.finishedAt).toLocaleString()}</span></div>}
             {!syncResult && integration.lastSyncAt && <p className="sync-summary">Última sincronização: {new Date(integration.lastSyncAt).toLocaleString()}</p>}
           </>
         ) : (

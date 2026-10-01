@@ -61,7 +61,7 @@ type MercadoLivreOrder = {
 type Page<T> = { results?: T[]; paging?: { total?: number; offset?: number; limit?: number }; scroll_id?: string | null }
 
 export type SyncCounts = { seen: number; created: number; updated: number; failed: number }
-export type SyncResponse = { jobId: string; status: 'SUCCESS' | 'PARTIAL' | 'FAILED'; products: number; orders: number; created: number; updated: number; failed: number; startedAt: string; finishedAt: string }
+export type SyncResponse = { jobId: string; status: 'SUCCESS' | 'PARTIAL' | 'FAILED'; products: number; orders: number; claims: number; returns: number; created: number; updated: number; failed: number; startedAt: string; finishedAt: string }
 
 export class SyncError extends Error {
   constructor(readonly code: 'INTEGRATION_NOT_CONNECTED' | 'SYNC_IN_PROGRESS' | 'SYNC_CONFIGURATION_ERROR' | 'REMOTE_API_ERROR') {
@@ -162,6 +162,8 @@ export class MercadoLivreSyncService {
 
     const products = emptyCounts()
     const orders = emptyCounts()
+    const claims = emptyCounts()
+    const returns = emptyCounts()
     const failures: string[] = []
     try {
       const accessToken = await getValidMercadoLivreAccessToken({ ...this.input, integration, now: now() })
@@ -177,19 +179,27 @@ export class MercadoLivreSyncService {
       failures.push('orders')
       orders.failed += 1
     }
+    try {
+      const accessToken = await getValidMercadoLivreAccessToken({ ...this.input, integration, now: now() })
+      await this.syncClaims(workspaceId, integration.id, integration.external_account_id, accessToken, claims, returns)
+    } catch {
+      failures.push('claims')
+      claims.failed += 1
+    }
 
-    const usefulRecords = products.seen + orders.seen
-    const status: SyncResponse['status'] = failures.length === 0 ? 'SUCCESS' : usefulRecords > 0 ? 'PARTIAL' : 'FAILED'
+    const usefulRecords = products.seen + orders.seen + claims.seen + returns.seen
+    const hasFailures = failures.length > 0 || claims.failed > 0 || returns.failed > 0
+    const status: SyncResponse['status'] = !hasFailures ? 'SUCCESS' : usefulRecords > 0 ? 'PARTIAL' : 'FAILED'
     const finishedAt = now().toISOString()
-    const seen = products.seen + orders.seen
-    const created = products.created + orders.created
-    const updated = products.updated + orders.updated
-    const failed = products.failed + orders.failed
+    const seen = products.seen + orders.seen + claims.seen + returns.seen
+    const created = products.created + orders.created + claims.created + returns.created
+    const updated = products.updated + orders.updated + claims.updated + returns.updated
+    const failed = products.failed + orders.failed + claims.failed + returns.failed
     await this.input.db.prepare("UPDATE sync_jobs SET status = ?1, finished_at = ?2, records_seen = ?3, records_created = ?4, records_updated = ?5, records_failed = ?6, error_summary = ?7 WHERE id = ?8")
       .bind(status, finishedAt, seen, created, updated, failed, failures.length ? `${failures.join(', ')} sync failed` : null, jobId)
       .run()
     if (status !== 'FAILED') await this.input.db.prepare("UPDATE integrations SET last_sync_at = ?1, updated_at = datetime('now') WHERE id = ?2").bind(finishedAt, integration.id).run()
-    return { jobId, status, products: products.seen, orders: orders.seen, created, updated, failed, startedAt, finishedAt }
+    return { jobId, status, products: products.seen, orders: orders.seen, claims: claims.seen, returns: returns.seen, created, updated, failed, startedAt, finishedAt }
   }
 
   private async syncProducts(workspaceId: string, sellerId: string, accessToken: string, counts: SyncCounts): Promise<void> {
@@ -317,6 +327,74 @@ export class MercadoLivreSyncService {
       await this.input.db.prepare("INSERT INTO order_items (id, workspace_id, order_id, external_item_id, title, seller_sku, quantity, unit_price, currency_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(workspace_id, order_id, external_item_id) DO UPDATE SET title = excluded.title, seller_sku = excluded.seller_sku, quantity = excluded.quantity, unit_price = excluded.unit_price, currency_id = excluded.currency_id, updated_at = datetime('now')")
         .bind(crypto.randomUUID(), workspaceId, orderId, item.externalItemId, item.title, item.sellerSku, item.quantity, item.unitPrice, item.currencyId)
         .run()
+    }
+  }
+
+  private async syncClaims(workspaceId: string, integrationId: string, sellerId: string, accessToken: string, claims: SyncCounts, returns: SyncCounts): Promise<void> {
+    const ids = new Set<string>()
+    const now = (this.input.now ?? (() => new Date()))()
+    const last = await this.input.db.prepare("SELECT finished_at FROM sync_jobs WHERE workspace_id = ?1 AND integration_id = ?2 AND type = ?3 AND status = 'SUCCESS' ORDER BY finished_at DESC LIMIT 1").bind(workspaceId, integrationId, SYNC_TYPE).first<LastJob>()
+    const from = last?.finished_at ? new Date(new Date(last.finished_at).getTime() - ORDER_SYNC_OVERLAP_MS) : new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000)
+    for (const search of [{ status: 'opened' }, { status: 'closed', from: from.toISOString() }]) {
+      let offset = 0
+      const limit = 100
+      while (offset + limit < 10000) {
+        const url = new URL('/post-purchase/v1/claims/search', MERCADOLIVRE_API_URL)
+        url.searchParams.set('players.user_id', sellerId)
+        url.searchParams.set('players.role', 'respondent')
+        url.searchParams.set('status', search.status)
+        if (search.from) url.searchParams.set('last_updated.from', search.from)
+        url.searchParams.set('limit', String(limit)); url.searchParams.set('offset', String(offset))
+        const page = await requestJson<Page<Record<string, unknown>>>(this.input.fetcher ?? fetch, url, accessToken)
+        const results = page.results ?? []
+        for (const claim of results) {
+          const externalId = typeof claim.id === 'string' || typeof claim.id === 'number' ? String(claim.id) : null
+          if (!externalId || ids.has(externalId)) continue
+          ids.add(externalId); claims.seen += 1
+          let detail: Record<string, unknown> = {}
+          try { detail = await requestJson<Record<string, unknown>>(this.input.fetcher ?? fetch, new URL(`/post-purchase/v1/claims/${encodeURIComponent(externalId)}/detail`, MERCADOLIVRE_API_URL), accessToken) } catch { claims.failed += 1 }
+          const claimId = await this.upsertClaim(workspaceId, claim, detail, claims)
+          const entities = Array.isArray(claim.related_entities) ? claim.related_entities : []
+          const hasReturn = entities.some((value) => value === 'return' || (typeof value === 'object' && value !== null && (value as { type?: unknown }).type === 'return'))
+          if (hasReturn) await this.syncReturns(workspaceId, claimId, externalId, claim.resource_id, accessToken, returns)
+        }
+        const total = page.paging?.total ?? results.length
+        offset += page.paging?.limit ?? limit
+        if (results.length === 0 || offset >= total) break
+      }
+    }
+  }
+
+  private async upsertClaim(workspaceId: string, claim: Record<string, unknown>, detail: Record<string, unknown>, counts: SyncCounts): Promise<string> {
+    const externalId = String(claim.id)
+    const resource = typeof claim.resource === 'string' ? claim.resource : null
+    const resourceId = claim.resource_id === undefined || claim.resource_id === null ? null : String(claim.resource_id)
+    const order = resource === 'order' && resourceId ? await this.input.db.prepare('SELECT id FROM orders WHERE workspace_id = ?1 AND external_id = ?2').bind(workspaceId, resourceId).first<{ id: string }>() : null
+    const resolution = typeof claim.resolution === 'object' && claim.resolution !== null ? claim.resolution as Record<string, unknown> : {}
+    const normalized = { externalId, resource, resourceId, status: claim.status ?? null, type: claim.type ?? null, stage: claim.stage ?? null, parent: claim.parent_id ?? null, reason: claim.reason_id ?? null, dueDate: detail.due_date ?? null, title: detail.title ?? null, problem: detail.problem ?? null, hasReturn: Array.isArray(claim.related_entities) && claim.related_entities.some((v) => v === 'return' || (typeof v === 'object' && v !== null && (v as { type?: unknown }).type === 'return')), updated: claim.last_updated ?? null }
+    const rawHash = await hashNormalized(normalized)
+    const existing = await this.input.db.prepare("SELECT id, raw_hash FROM claims WHERE workspace_id = ?1 AND channel = 'MERCADOLIVRE' AND external_id = ?2").bind(workspaceId, externalId).first<{ id: string; raw_hash: string }>()
+    const syncedAt = (this.input.now ?? (() => new Date()))().toISOString()
+    const values = [resource, resourceId, order?.id ?? null, claim.status ?? null, claim.type ?? null, claim.stage ?? null, claim.parent_id ?? null, claim.reason_id ?? null, claim.fulfilled === true ? 1 : claim.fulfilled === false ? 0 : null, claim.quantity_type ?? null, safeNumber(claim.claimed_quantity), claim.site_id ?? null, detail.due_date ?? null, detail.action_responsible ?? null, detail.title ?? null, detail.problem ?? null, normalized.hasReturn ? 1 : 0, resolution.reason ?? null, resolution.closed_by ?? null, resolution.applied_coverage === true ? 1 : resolution.applied_coverage === false ? 0 : null, claim.date_created ?? null, claim.last_updated ?? null, rawHash, syncedAt]
+    if (!existing) {
+      const id = crypto.randomUUID()
+      await this.input.db.prepare("INSERT INTO claims (id, workspace_id, channel, external_id, resource, external_resource_id, order_id, status, type, stage, parent_external_id, reason_id, fulfilled, quantity_type, claimed_quantity, site_id, due_date, action_responsible, title, problem, has_return, resolution_reason, resolution_closed_by, resolution_applied_coverage, external_created_at, external_updated_at, raw_hash, last_synced_at) VALUES (?1, ?2, 'MERCADOLIVRE', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)").bind(id, workspaceId, externalId, ...values).run()
+      counts.created += 1; return id
+    }
+    if (existing.raw_hash !== rawHash) { await this.input.db.prepare("UPDATE claims SET resource = ?1, external_resource_id = ?2, order_id = ?3, status = ?4, type = ?5, stage = ?6, parent_external_id = ?7, reason_id = ?8, fulfilled = ?9, quantity_type = ?10, claimed_quantity = ?11, site_id = ?12, due_date = ?13, action_responsible = ?14, title = ?15, problem = ?16, has_return = ?17, resolution_reason = ?18, resolution_closed_by = ?19, resolution_applied_coverage = ?20, external_created_at = ?21, external_updated_at = ?22, raw_hash = ?23, last_synced_at = ?24, updated_at = datetime('now') WHERE id = ?25").bind(...values, existing.id).run(); counts.updated += 1 }
+    return existing.id
+  }
+
+  private async syncReturns(workspaceId: string, claimId: string, externalClaimId: string, resourceId: unknown, accessToken: string, counts: SyncCounts): Promise<void> {
+    const payload = await requestJson<Record<string, unknown> | Array<Record<string, unknown>>>(this.input.fetcher ?? fetch, new URL(`/post-purchase/v2/claims/${encodeURIComponent(externalClaimId)}/returns`, MERCADOLIVRE_API_URL), accessToken)
+    const results = Array.isArray(payload) ? payload : Array.isArray(payload.results) ? payload.results as Record<string, unknown>[] : [payload]
+    for (const item of results) {
+      if (item.id === undefined || item.id === null) { counts.failed += 1; continue }
+      counts.seen += 1
+      const externalId = String(item.id); const normalized = { externalId, status: item.status ?? null, subtype: item.subtype ?? null, money: item.status_money ?? null, updated: item.last_updated ?? null }
+      const rawHash = await hashNormalized(normalized); const existing = await this.input.db.prepare("SELECT id, raw_hash FROM returns WHERE workspace_id = ?1 AND channel = 'MERCADOLIVRE' AND external_id = ?2").bind(workspaceId, externalId).first<{ id: string; raw_hash: string }>(); const syncedAt = (this.input.now ?? (() => new Date()))().toISOString()
+      const values = [claimId, externalClaimId, resourceId === undefined || resourceId === null ? null : String(resourceId), item.status ?? null, item.subtype ?? null, item.resource_type ?? null, item.status_money ?? null, item.refund_at ?? null, item.date_closed ?? null, item.date_created ?? null, item.last_updated ?? null, rawHash, syncedAt]
+      if (!existing) { await this.input.db.prepare("INSERT INTO returns (id, workspace_id, channel, external_id, claim_id, external_claim_id, external_resource_id, status, subtype, resource_type, status_money, refund_at, date_closed, external_created_at, external_updated_at, raw_hash, last_synced_at) VALUES (?1, ?2, 'MERCADOLIVRE', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)").bind(crypto.randomUUID(), workspaceId, externalId, ...values).run(); counts.created += 1 } else if (existing.raw_hash !== rawHash) { await this.input.db.prepare("UPDATE returns SET claim_id = ?1, external_claim_id = ?2, external_resource_id = ?3, status = ?4, subtype = ?5, resource_type = ?6, status_money = ?7, refund_at = ?8, date_closed = ?9, external_created_at = ?10, external_updated_at = ?11, raw_hash = ?12, last_synced_at = ?13, updated_at = datetime('now') WHERE id = ?14").bind(...values, existing.id).run(); counts.updated += 1 }
     }
   }
 }

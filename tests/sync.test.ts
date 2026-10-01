@@ -11,6 +11,8 @@ type Product = { id: string; workspace_id: string; external_id: string; raw_hash
 type Order = { id: string; workspace_id: string; external_id: string; raw_hash: string; status: string | null }
 type OrderItem = { workspace_id: string; order_id: string; external_item_id: string; quantity: number }
 type Job = { id: string; workspace_id: string; integration_id: string; status: string; type: string; finished_at: string | null; records_seen: number; records_created: number; records_updated: number; records_failed: number }
+type Claim = { id: string; workspace_id: string; external_id: string; raw_hash: string; order_id: string | null }
+type Return = { id: string; workspace_id: string; external_id: string; raw_hash: string }
 
 class FakeStatement implements D1Statement {
   constructor(private readonly db: FakeSyncDb, private readonly query: string, private readonly values: unknown[] = []) {}
@@ -26,6 +28,8 @@ class FakeSyncDb implements D1Database {
   orders: Order[] = []
   orderItems: OrderItem[] = []
   jobs: Job[] = []
+  claims: Claim[] = []
+  returns: Return[] = []
 
   prepare(query: string): D1Statement { return new FakeStatement(this, query) }
 
@@ -33,6 +37,8 @@ class FakeSyncDb implements D1Database {
     if (query.includes('FROM integrations WHERE workspace_id')) return (this.integrations.find((value) => value.workspace_id === values[0]) as T | undefined) ?? null
     if (query.includes('FROM products WHERE')) return (this.products.find((value) => value.workspace_id === values[0] && value.external_id === values[1]) as T | undefined) ?? null
     if (query.includes('FROM orders WHERE')) return (this.orders.find((value) => value.workspace_id === values[0] && value.external_id === values[1]) as T | undefined) ?? null
+    if (query.includes('FROM claims WHERE')) return (this.claims.find((value) => value.workspace_id === values[0] && value.external_id === values[1]) as T | undefined) ?? null
+    if (query.includes('FROM returns WHERE')) return (this.returns.find((value) => value.workspace_id === values[0] && value.external_id === values[1]) as T | undefined) ?? null
     if (query.includes('FROM sync_jobs WHERE')) {
       const result = this.jobs.filter((value) => value.workspace_id === values[0] && value.integration_id === values[1] && value.type === values[2] && value.status === 'SUCCESS').at(-1)
       return (result as T | undefined) ?? null
@@ -85,6 +91,24 @@ class FakeSyncDb implements D1Database {
       else this.orderItems.push({ workspace_id: String(values[1]), order_id: String(values[2]), external_item_id: String(values[3]), quantity: Number(values[6]) })
       return { results: [], success: true, meta: { changes: 1 } }
     }
+    if (query.startsWith('INSERT INTO claims')) {
+      this.claims.push({ id: String(values[0]), workspace_id: String(values[1]), external_id: String(values[2]), order_id: values[5] as string | null, raw_hash: String(values[25]) })
+      return { results: [], success: true, meta: { changes: 1 } }
+    }
+    if (query.startsWith('UPDATE claims SET')) {
+      const claim = this.claims.find((value) => value.id === values[24])!
+      Object.assign(claim, { order_id: values[2] as string | null, raw_hash: String(values[22]) })
+      return { results: [], success: true, meta: { changes: 1 } }
+    }
+    if (query.startsWith('INSERT INTO returns')) {
+      this.returns.push({ id: String(values[0]), workspace_id: String(values[1]), external_id: String(values[2]), raw_hash: String(values[14]) })
+      return { results: [], success: true, meta: { changes: 1 } }
+    }
+    if (query.startsWith('UPDATE returns SET')) {
+      const value = this.returns.find((item) => item.id === values[13])!
+      value.raw_hash = String(values[11])
+      return { results: [], success: true, meta: { changes: 1 } }
+    }
     return { results: [], success: true, meta: { changes: 1 } }
   }
 }
@@ -112,6 +136,7 @@ function mercadoLivreFetch(products: ReturnType<typeof product>[], orders: Retur
       return new Response(JSON.stringify({ results: products.map((value) => value.id), paging: { total: products.length, limit: 100, offset: 0 } }), { status: 200 })
     }
     if (url.includes('/items/bulk')) return new Response(JSON.stringify(products.map((value) => ({ status_code: 200, body: value }))), { status: 200 })
+    if (url.includes('/post-purchase/v1/claims/search')) return new Response(JSON.stringify({ results: [], paging: { total: 0, limit: 100, offset: 0 } }), { status: 200 })
     if (url.includes('/orders/search')) {
       if (options.failOrders) return new Response('{}', { status: 500 })
       return new Response(JSON.stringify({ results: orders, paging: { total: orders.length, limit: 50, offset: 0 } }), { status: 200 })
@@ -124,7 +149,38 @@ function service(db: FakeSyncDb, fetcher: typeof fetch) {
   return new MercadoLivreSyncService({ db, clientId: 'client-id', clientSecret: 'client-secret', tokenEncryptionKey: tokenKey, fetcher, now: () => fixedNow })
 }
 
+function claimsFetch(claims: Array<Record<string, unknown>>, returns: Array<Record<string, unknown>> = [], detailAvailable = true) {
+  return vi.fn(async (input: string | URL) => {
+    const url = String(input)
+    if (url.includes('/items/search')) return new Response(JSON.stringify({ results: [], paging: { total: 0, limit: 100, offset: 0 } }))
+    if (url.includes('/orders/search')) return new Response(JSON.stringify({ results: [], paging: { total: 0, limit: 50, offset: 0 } }))
+    if (url.includes('/claims/search')) return new Response(JSON.stringify({ results: claims, paging: { total: claims.length, limit: 100, offset: 0 } }))
+    if (url.includes('/detail')) return new Response(detailAvailable ? JSON.stringify({ due_date: '2026-12-01T00:00:00.000Z', action_responsible: 'seller', title: 'Damaged', problem: 'item' }) : '{}', { status: detailAvailable ? 200 : 404 })
+    if (url.includes('/returns')) return new Response(JSON.stringify(returns))
+    throw new Error(`Unexpected URL: ${url}`)
+  }) as unknown as typeof fetch
+}
+
 describe('Mercado Livre commerce sync foundation', () => {
+  it('syncs, links, and deduplicates claims and returns without persisting PII', async () => {
+    const db = new FakeSyncDb(); db.integrations.push(await connectedIntegration()); db.orders.push({ id: 'order-local', workspace_id: 'workspace-a', external_id: 'order-1', raw_hash: 'hash', status: 'paid' })
+    const claim = { id: 'claim-1', resource: 'order', resource_id: 'order-1', status: 'opened', type: 'return', stage: 'dispute', reason_id: 'reason', related_entities: [{ type: 'return' }], date_created: '2026-09-01T00:00:00.000Z', last_updated: '2026-09-02T00:00:00.000Z', buyer: { email: 'never-store@example.com' } }
+    const returned = { id: 'return-1', status: 'opened', subtype: 'return', status_money: 'retained', resource_type: 'order', date_created: '2026-09-01T00:00:00.000Z', last_updated: '2026-09-02T00:00:00.000Z' }
+    const fetcher = claimsFetch([claim], [returned])
+    const first = await service(db, fetcher).sync('workspace-a')
+    const repeat = await service(db, fetcher).sync('workspace-a')
+    expect(first).toMatchObject({ claims: 1, returns: 1 }); expect(repeat.created).toBe(0)
+    expect(db.claims).toHaveLength(1); expect(db.claims[0].order_id).toBe('order-local'); expect(db.returns).toHaveLength(1)
+    expect(JSON.stringify(db.claims)).not.toContain('never-store@example.com')
+    const searchCalls = (fetcher as unknown as ReturnType<typeof vi.fn>).mock.calls.filter((call: unknown[]) => String(call[0]).includes('/claims/search'))
+    expect(searchCalls.some((call: unknown[]) => String(call[0]).includes('players.user_id=seller-123') && String(call[0]).includes('players.role=respondent'))).toBe(true)
+  })
+
+  it('preserves a claim without an order and continues when detail is unavailable', async () => {
+    const db = new FakeSyncDb(); db.integrations.push(await connectedIntegration())
+    const result = await service(db, claimsFetch([{ id: 'claim-2', resource: 'order', resource_id: 'missing-order', status: 'opened', related_entities: [] }], [], false)).sync('workspace-a')
+    expect(db.claims[0].order_id).toBeNull(); expect(result.status).toBe('PARTIAL')
+  })
   it('completes a zero-data sync successfully', async () => {
     const db = new FakeSyncDb(); db.integrations.push(await connectedIntegration())
     const result = await service(db, mercadoLivreFetch([], [])).sync('workspace-a')

@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 4A — Claims + Returns Foundation
+Phase 5A — ReturnShield Core
 
 ## Status
-LOCAL READY / REMOTE MIGRATION PENDING
+LOCAL READY / DEPLOY PENDING
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -37,9 +37,12 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - Real Mercado Livre products and orders requests verified against the connected seller account; the account returned zero listings and zero orders.
 - Sync API returns `502/SYNC_FAILED` instead of HTTP 200 when the service reports `FAILED`; zero-data and partial-sync states are surfaced safely in the UI.
 - Local, read-only Claims and Returns normalization through the existing Mercado Livre sync service.
+- ReturnShield Core with deterministic Money at Risk and Risk Score V1 calculated on demand from claims and orders.
+- ReturnShield dashboard API scoped exclusively to the signed session workspace, with prioritized, PII-minimized cases.
+- ReturnShield dashboard UI with zero-data state and Mercado Livre integration card preserved.
 
 ## Database
-Latest migration: `migrations/0004_claims_returns.sql` (local ready; remote not applied)
+Latest migration: `migrations/0004_claims_returns.sql` (remote applied)
 
 ## Relevant Routes
 - `GET /api/health`
@@ -99,10 +102,20 @@ Build: PASS
 - Orders returned: 0
 - Real-data persistence: NOT VERIFIED
 - Reason: connected seller account contains no listings/orders
-- Phase 4A Claims + Returns foundation: LOCAL READY
-- Remote migration `0004_claims_returns.sql`: PENDING AUTHORIZATION
-- Claims/Returns production deploy: NOT DONE
-- Real Claims/Returns sync: NOT EXECUTED
+- Phase 4 Claims + Returns: PASS — LIVE_API_VERIFIED / ZERO_DATA_ACCOUNT
+- Migration `0004_claims_returns.sql`: APPLIED
+- Claims/Returns production deploy: PASS
+- Claims API real: VERIFIED; returned 0
+- Returns API flow: VERIFIED; returned 0
+- Read-only integration: PASS
+- Real-data persistence: NOT VERIFIED
+- Reason: connected seller account contains no orders, claims, or returns
+- Money at Risk V1: READY
+- Risk Engine V1: READY
+- Deterministic prioritization: READY
+- ReturnShield dashboard API: READY
+- ReturnShield dashboard UI: READY
+- AI dependency: NONE
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -114,4 +127,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Review and authorize remote application of `migrations/0004_claims_returns.sql`; then deploy and test Claims/Returns against the real API. Keep the integration read-only.
+Phase 5B — deploy and production zero-data verification.

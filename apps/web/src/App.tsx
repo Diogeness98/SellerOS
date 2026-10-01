@@ -2,7 +2,24 @@ import { FormEvent, useEffect, useState } from 'react'
 
 type Session = { authenticated: boolean; user?: { id: string; email: string }; workspaceId?: string }
 type Integration = { connected: boolean; externalAccountId: string | null; lastSyncAt: string | null }
+type PriorityCase = { externalClaimId: string; externalOrderId: string | null; estimatedExposure: number | null; currencyId: string | null; amountKnown: boolean; deadlineAt: string | null; hoursToDeadline: number | null; riskScore: number; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'; hasReturn: boolean; overdue: boolean; title: string | null; problem: string | null; reasons: string[] }
+type Dashboard = { moneyAtRisk: { currency: 'BRL'; estimatedAmount: number; pricedCases: number; unpricedCases: number }; openCases: number; criticalCases: number; highCases: number; overdueCases: number; dueToday: number; casesWithReturns: number; priorityCases: PriorityCase[] }
 export type SyncResult = { jobId: string; status: 'SUCCESS' | 'PARTIAL' | 'FAILED'; products: number; orders: number; claims: number; returns: number; created: number; updated: number; failed: number; startedAt: string; finishedAt: string }
+
+const reasonLabels: Record<string, string> = {
+  high_financial_exposure: 'Exposição financeira alta',
+  deadline_overdue: 'Prazo vencido',
+  deadline_within_24h: 'Prazo em até 24 horas',
+  deadline_within_72h: 'Prazo em até 72 horas',
+  deadline_missing: 'Prazo não informado',
+  return_in_progress: 'Devolução em andamento',
+  amount_unknown: 'Valor não disponível',
+  currency_not_scored: 'Moeda não pontuada',
+}
+
+function formatMoney(amount: number, currency = 'BRL') {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(amount)
+}
 
 export function syncOutcomeMessage(result: Pick<SyncResult, 'status' | 'products' | 'orders'>): string | null {
   if (result.status === 'SUCCESS' && result.products === 0 && result.orders === 0) return 'Sincronização concluída. Nenhum anúncio ou pedido foi encontrado nesta conta.'
@@ -11,11 +28,16 @@ export function syncOutcomeMessage(result: Pick<SyncResult, 'status' | 'products
   return null
 }
 
+export function returnShieldEmptyMessage(openCases: number): string | null {
+  return openCases === 0 ? 'Nenhum caso em risco encontrado.' : null
+}
+
 const sessionEndpoint = '/api/auth/session'
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [integration, setIntegration] = useState<Integration | null>(null)
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
@@ -46,13 +68,24 @@ export function App() {
     }
   }
 
+  async function loadDashboard() {
+    const response = await fetch('/api/returnshield/dashboard', { credentials: 'include' })
+    if (!response.ok) return
+    setDashboard(await response.json() as Dashboard)
+  }
+
   useEffect(() => {
     void restoreSession().catch(() => setSession({ authenticated: false }))
   }, [])
 
   useEffect(() => {
-    if (session?.authenticated) void loadIntegration().catch(() => setIntegration(null))
-    else setIntegration(null)
+    if (session?.authenticated) {
+      void loadIntegration().catch(() => setIntegration(null))
+      void loadDashboard().catch(() => setDashboard(null))
+    } else {
+      setIntegration(null)
+      setDashboard(null)
+    }
   }, [session?.authenticated])
 
   async function login(event: FormEvent<HTMLFormElement>) {
@@ -84,6 +117,7 @@ export function App() {
     setSyncResult(null)
     setSyncError('')
     setSyncOutcome('')
+    setDashboard(null)
   }
 
   async function syncMercadoLivre() {
@@ -97,6 +131,7 @@ export function App() {
       setSyncResult(result)
       setSyncOutcome(syncOutcomeMessage(result) ?? '')
       await loadIntegration()
+      await loadDashboard()
     } catch {
       setSyncError('Não foi possível concluir a sincronização.')
     } finally {
@@ -129,6 +164,32 @@ export function App() {
         <div><span className="eyebrow">SELLEROS</span><p>{session.user.email}</p></div>
         <button className="secondary" onClick={() => void logout()}>Sair</button>
       </header>
+      <section className="returnshield" aria-labelledby="returnshield-title">
+        <span className="eyebrow">RETURNSHIELD</span>
+        <h1 id="returnshield-title">Dinheiro em risco</h1>
+        {dashboard ? (
+          <>
+            <div className="risk-grid">
+              <article className="risk-card primary"><span>Exposição estimada</span><strong>{formatMoney(dashboard.moneyAtRisk.estimatedAmount)}</strong><small>Money at Risk é uma estimativa interna do SellerOS baseada nos dados disponíveis.</small></article>
+              <article className="risk-card"><strong>{dashboard.openCases}</strong><span>casos abertos</span></article>
+              <article className="risk-card"><strong>{dashboard.criticalCases}</strong><span>críticos</span></article>
+              <article className="risk-card"><strong>{dashboard.overdueCases}</strong><span>vencidos</span></article>
+              <article className="risk-card"><strong>{dashboard.dueToday}</strong><span>vencendo hoje</span></article>
+            </div>
+            <div className="priority-header"><h2>Casos prioritários</h2><span>{dashboard.casesWithReturns} com devolução</span></div>
+            {returnShieldEmptyMessage(dashboard.openCases) ? <p className="empty-state">{returnShieldEmptyMessage(dashboard.openCases)}</p> : <div className="priority-list">{dashboard.priorityCases.map((riskCase) => (
+              <article className="priority-case" key={riskCase.externalClaimId}>
+                <div><strong>#{riskCase.externalClaimId}</strong>{riskCase.title && <p>{riskCase.title}</p>}</div>
+                <span className={`severity ${riskCase.severity.toLowerCase()}`}>{riskCase.severity}</span>
+                <p>{riskCase.amountKnown && riskCase.estimatedExposure !== null ? `Exposição estimada: ${formatMoney(riskCase.estimatedExposure, riskCase.currencyId ?? 'BRL')}` : 'Exposição estimada indisponível'}</p>
+                <p>Risk Score: {riskCase.riskScore}</p>
+                <p>{riskCase.overdue ? 'Prazo vencido' : riskCase.deadlineAt ? `Prazo: ${new Date(riskCase.deadlineAt).toLocaleString()}` : 'Prazo não informado'}</p>
+                {riskCase.reasons.length > 0 && <p className="reasons">{riskCase.reasons.map((reason) => reasonLabels[reason] ?? reason).join(' · ')}</p>}
+              </article>
+            ))}</div>}
+          </>
+        ) : <p className="loading">Carregando ReturnShield…</p>}
+      </section>
       <section className="card integration-card" aria-labelledby="integration-title">
         <span className="eyebrow">INTEGRAÇÕES</span>
         <h1 id="integration-title">Mercado Livre</h1>

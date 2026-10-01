@@ -4,6 +4,7 @@ import { createCodeChallenge, createCodeVerifier, createOAuthState } from '../sh
 import { encryptToken } from './crypto'
 import { exchangeAuthorizationCode, fetchMercadoLivreUser, MercadoLivreApiError, MERCADOLIVRE_AUTHORIZATION_URL } from './mercadolivre'
 import { MercadoLivreSyncService, SyncError } from './sync'
+import { getReturnShieldDashboard } from './returnshield'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
@@ -127,6 +128,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (!session) return error('FORBIDDEN', 'Authentication required', 403)
     const integration = await env.DB.prepare("SELECT id, workspace_id, channel, status, external_account_id, token_expires_at, last_sync_at FROM integrations WHERE workspace_id = ?1 AND channel = 'MERCADOLIVRE'").bind(session.workspaceId).first<IntegrationRow>()
     return json({ connected: integration?.status === 'CONNECTED', channel: 'MERCADOLIVRE', externalAccountId: integration?.external_account_id ?? null, tokenExpiresAt: integration?.token_expires_at ?? null, lastSyncAt: integration?.last_sync_at ?? null })
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/returnshield/dashboard') {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    return json(await getReturnShieldDashboard(env.DB, session.workspaceId))
   }
 
   if (request.method === 'POST' && url.pathname === '/api/integrations/mercadolivre/sync') {

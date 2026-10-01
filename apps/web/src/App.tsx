@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react'
+import { isInvitePasswordValid } from '../../../shared/password-policy'
 
 type Session = { authenticated: boolean; user?: { id: string; email: string }; workspaceId?: string }
 type Integration = { connected: boolean; externalAccountId: string | null; lastSyncAt: string | null }
@@ -142,6 +143,10 @@ export function App() {
       setLoginError('As senhas não coincidem.')
       return
     }
+    if (!isInvitePasswordValid(password)) {
+      setLoginError('A senha deve ter pelo menos 10 caracteres, com maiúscula, minúscula e número.')
+      return
+    }
     setSubmitting(true)
     setLoginError('')
     try {
@@ -249,7 +254,7 @@ export function App() {
             {inviteToken && <><p className="auth-help">Crie seu acesso para conectar sua conta do Mercado Livre e testar o ReturnShield.</p><label>Nome da operação<input value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} autoComplete="organization" maxLength={120} required /></label></>}
             <label>E-mail<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label>
             <label>Senha<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={inviteToken ? 'new-password' : 'current-password'} minLength={inviteToken ? 10 : undefined} required /></label>
-            {inviteToken && <label>Confirmar senha<input type="password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} autoComplete="new-password" minLength={10} required /></label>}
+            {inviteToken && <><label>Confirmar senha<input type="password" value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} autoComplete="new-password" minLength={10} required /></label><p className="auth-help">Use pelo menos 10 caracteres, incluindo letra maiúscula, minúscula e número.</p></>}
             {loginError && <p className="error" role="alert">{loginError}</p>}
             {inviteToken && <p className="auth-help">Seu Mercado Livre será conectado somente depois que você autorizar.</p>}
             <button type="submit" disabled={submitting}>{submitting ? 'Processando…' : inviteToken ? 'Criar acesso e continuar' : 'Entrar'}</button>

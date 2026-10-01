@@ -124,6 +124,19 @@ describe('validation seller onboarding', () => {
     expect(db.workspaces).toHaveLength(1)
   })
 
+  it('allows only one registration when the same invite is submitted concurrently', async () => {
+    const db = await createDb()
+    const responses = await Promise.all([
+      handleRequest(registrationRequest(validBody), env(db)),
+      handleRequest(registrationRequest({ ...validBody, email: 'second@example.com' }), env(db)),
+    ])
+    expect(responses.map((response) => response.status).sort()).toEqual([201, 400])
+    expect(db.users).toHaveLength(1)
+    expect(db.workspaces).toHaveLength(1)
+    expect(db.members).toHaveLength(1)
+    expect(db.invite.usedAt).not.toBeNull()
+  })
+
   it('does not consume an invite when duplicate or failed writes roll back', async () => {
     const duplicate = await createDb()
     duplicate.users.push({ id: 'existing-user', email: validBody.email, passwordHash: 'hash' })

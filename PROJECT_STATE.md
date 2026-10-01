@@ -187,4 +187,6 @@ REAL SELLER VALIDATION
 - One-time invite flow: DEPLOYED
 - Registration isolation: PASS
 - Automatic session creation: PASS
+- Registration foreign-key hotfix: DEPLOYED / PRODUCTION VERIFIED
+- Test seller registration: PASS
 - Real seller validation: PENDING

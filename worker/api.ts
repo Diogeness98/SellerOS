@@ -3,6 +3,7 @@ import type { Role, Session } from '../shared/types'
 import { createCodeChallenge, createCodeVerifier, createOAuthState } from '../shared/oauth'
 import { encryptToken } from './crypto'
 import { exchangeAuthorizationCode, fetchMercadoLivreUser, MercadoLivreApiError, MERCADOLIVRE_AUTHORIZATION_URL } from './mercadolivre'
+import { MercadoLivreSyncService, SyncError } from './sync'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
@@ -10,6 +11,7 @@ type SessionUserRow = { id: string; email: string }
 type MembershipRow = { workspace_id: string; role: Role }
 type OAuthAttemptRow = { state: string; user_id: string; workspace_id: string; code_verifier: string; expires_at: string; consumed_at: string | null }
 type IntegrationRow = { id: string; workspace_id: string; channel: string; status: string; external_account_id: string | null; token_expires_at: string | null; last_sync_at: string | null }
+type SyncJobRow = { id: string; status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'PARTIAL' | 'FAILED'; records_seen: number; records_created: number; records_updated: number; records_failed: number; started_at: string | null; finished_at: string | null }
 
 const json = (body: unknown, status = 200, requestId = crypto.randomUUID()) =>
   new Response(JSON.stringify(body), {
@@ -125,6 +127,36 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (!session) return error('FORBIDDEN', 'Authentication required', 403)
     const integration = await env.DB.prepare("SELECT id, workspace_id, channel, status, external_account_id, token_expires_at, last_sync_at FROM integrations WHERE workspace_id = ?1 AND channel = 'MERCADOLIVRE'").bind(session.workspaceId).first<IntegrationRow>()
     return json({ connected: integration?.status === 'CONNECTED', channel: 'MERCADOLIVRE', externalAccountId: integration?.external_account_id ?? null, tokenExpiresAt: integration?.token_expires_at ?? null, lastSyncAt: integration?.last_sync_at ?? null })
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/integrations/mercadolivre/sync') {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    if (!canManageWorkspace(session.role)) return error('FORBIDDEN', 'Insufficient permissions', 403)
+    try {
+      const result = await new MercadoLivreSyncService({
+        db: env.DB,
+        clientId: env.MERCADOLIVRE_CLIENT_ID,
+        clientSecret: env.MERCADOLIVRE_CLIENT_SECRET,
+        tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,
+      }).sync(session.workspaceId)
+      return json(result)
+    } catch (cause) {
+      if (cause instanceof SyncError && cause.code === 'SYNC_IN_PROGRESS') return error('SYNC_IN_PROGRESS', 'A sync is already running', 409)
+      if (cause instanceof SyncError && cause.code === 'INTEGRATION_NOT_CONNECTED') return error('INTEGRATION_NOT_CONNECTED', 'Mercado Livre is not connected', 409)
+      if (cause instanceof SyncError && cause.code === 'SYNC_CONFIGURATION_ERROR') return error('CONFIGURATION_ERROR', 'Mercado Livre sync is not configured', 503)
+      return error('SYNC_FAILED', 'Mercado Livre sync could not be completed', 502)
+    }
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/integrations/mercadolivre/sync/status') {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    const job = await env.DB.prepare("SELECT id, status, records_seen, records_created, records_updated, records_failed, started_at, finished_at FROM sync_jobs WHERE workspace_id = ?1 AND channel = 'MERCADOLIVRE' ORDER BY created_at DESC LIMIT 1")
+      .bind(session.workspaceId)
+      .first<SyncJobRow>()
+    if (!job) return json({ job: null })
+    return json({ job: { jobId: job.id, status: job.status, recordsSeen: job.records_seen, created: job.records_created, updated: job.records_updated, failed: job.records_failed, startedAt: job.started_at, finishedAt: job.finished_at } })
   }
 
   if (request.method === 'POST' && url.pathname === '/api/integrations/mercadolivre/disconnect') {

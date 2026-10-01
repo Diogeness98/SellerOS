@@ -52,17 +52,17 @@ export async function exchangeAuthorizationCode(input: {
   return token as MercadoLivreTokenResponse
 }
 
-export async function refreshMercadoLivreTokens(input: { clientId: string; clientSecret: string; refreshToken: string }): Promise<MercadoLivreTokenResponse> {
+export async function refreshMercadoLivreTokens(input: { clientId: string; clientSecret: string; refreshToken: string }, fetcher: typeof fetch = fetch): Promise<MercadoLivreTokenResponse> {
   const body = new URLSearchParams({ grant_type: 'refresh_token', client_id: input.clientId, client_secret: input.clientSecret, refresh_token: input.refreshToken })
-  const response = await fetch(MERCADOLIVRE_TOKEN_URL, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' }, body })
+  const response = await fetcher(MERCADOLIVRE_TOKEN_URL, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' }, body })
   if (!response.ok) throw new Error('Mercado Livre token refresh failed')
   const token = (await response.json()) as Partial<MercadoLivreTokenResponse>
   if (!token.access_token || !token.refresh_token || typeof token.expires_in !== 'number') throw new Error('Mercado Livre refresh response was invalid')
   return token as MercadoLivreTokenResponse
 }
 
-export async function refreshAndStoreMercadoLivreTokens(input: { db: D1Database; integrationId: string; clientId: string; clientSecret: string; refreshToken: string; tokenEncryptionKey: string }): Promise<string> {
-  const token = await refreshMercadoLivreTokens(input)
+export async function refreshAndStoreMercadoLivreTokens(input: { db: D1Database; integrationId: string; clientId: string; clientSecret: string; refreshToken: string; tokenEncryptionKey: string }, fetcher: typeof fetch = fetch): Promise<string> {
+  const token = await refreshMercadoLivreTokens(input, fetcher)
   const accessTokenEncrypted = await encryptToken(token.access_token, input.tokenEncryptionKey)
   const refreshTokenEncrypted = await encryptToken(token.refresh_token, input.tokenEncryptionKey)
   const tokenExpiresAt = new Date(Date.now() + token.expires_in * 1000).toISOString()

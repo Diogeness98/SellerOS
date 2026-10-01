@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useState } from 'react'
 
 type Session = { authenticated: boolean; user?: { id: string; email: string }; workspaceId?: string }
-type Integration = { connected: boolean; externalAccountId: string | null }
+type Integration = { connected: boolean; externalAccountId: string | null; lastSyncAt: string | null }
+type SyncResult = { jobId: string; status: string; products: number; orders: number; created: number; updated: number; failed: number; startedAt: string; finishedAt: string }
 
 const sessionEndpoint = '/api/auth/session'
 
@@ -13,6 +14,9 @@ export function App() {
   const [loginError, setLoginError] = useState('')
   const [notice, setNotice] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
+  const [syncError, setSyncError] = useState('')
 
   async function restoreSession() {
     const response = await fetch(sessionEndpoint, { credentials: 'include' })
@@ -69,6 +73,23 @@ export function App() {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
     setSession({ authenticated: false })
     setNotice('')
+    setSyncResult(null)
+    setSyncError('')
+  }
+
+  async function syncMercadoLivre() {
+    setSyncing(true)
+    setSyncError('')
+    try {
+      const response = await fetch('/api/integrations/mercadolivre/sync', { method: 'POST', credentials: 'include' })
+      if (!response.ok) throw new Error('Sync failed')
+      setSyncResult(await response.json() as SyncResult)
+      await loadIntegration()
+    } catch {
+      setSyncError('Não foi possível sincronizar agora. Tente novamente mais tarde.')
+    } finally {
+      setSyncing(false)
+    }
   }
 
   if (!session) return <main className="shell"><p className="loading">Carregando SellerOS…</p></main>
@@ -100,7 +121,13 @@ export function App() {
         <span className="eyebrow">INTEGRAÇÕES</span>
         <h1 id="integration-title">Mercado Livre</h1>
         {integration?.connected ? (
-          <div className="status connected" role="status"><span className="dot" /> Mercado Livre conectado{integration.externalAccountId && <small>Conta: {integration.externalAccountId}</small>}</div>
+          <>
+            <div className="status connected" role="status"><span className="dot" /> Mercado Livre conectado{integration.externalAccountId && <small>Conta: {integration.externalAccountId}</small>}</div>
+            <button onClick={() => void syncMercadoLivre()} disabled={syncing}>{syncing ? 'Sincronizando...' : 'Sincronizar dados'}</button>
+            {syncError && <p className="error" role="alert">{syncError}</p>}
+            {syncResult && <div className="sync-summary" role="status"><span>Produtos: {syncResult.products}</span><span>Pedidos: {syncResult.orders}</span><span>Criados: {syncResult.created}</span><span>Atualizados: {syncResult.updated}</span><span>Última sincronização: {new Date(syncResult.finishedAt).toLocaleString()}</span></div>}
+            {!syncResult && integration.lastSyncAt && <p className="sync-summary">Última sincronização: {new Date(integration.lastSyncAt).toLocaleString()}</p>}
+          </>
         ) : (
           <div className="status" role="status"><span className="dot muted" /> Mercado Livre desconectado</div>
         )}

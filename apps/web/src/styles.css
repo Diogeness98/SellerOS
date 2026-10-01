@@ -25,4 +25,5 @@ input { width: 100%; padding: .75rem; border: 1px solid #39446f; border-radius: 
 .muted { background: #8d96b9; box-shadow: none; }
 .notice { color: #8ff0bb; }
 .loading { color: #cbd3ff; }
+.sync-summary { display: grid; gap: .3rem; margin: 1rem 0 0; color: #aeb7d8; line-height: 1.5; }
 @media (max-width: 560px) { .shell { padding: 1.25rem; } .card { padding: 1.5rem; } }

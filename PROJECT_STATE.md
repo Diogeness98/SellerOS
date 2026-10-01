@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 2 — Mercado Livre Connect
+Phase 3A — Mercado Livre Data Sync Foundation
 
 ## Status
-PASS — REAL_WORLD_VERIFIED
+LOCAL READY — REMOTE MIGRATION PENDING
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -31,9 +31,12 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - OAuth state validation and single-use attempt: VERIFIED.
 - Real Mercado Livre authorization: PASS; `/users/me` completed in the Worker.
 - Mercado Livre integration persisted in D1 with an external account ID, encrypted access/refresh tokens, and token expiration.
+- Local Mercado Livre sync foundation for products and orders with idempotent, workspace-scoped persistence.
+- Token service that refreshes only when needed and atomically replaces the one-time refresh token after a successful renewal.
+- Sync job tracking with a per-workspace/integration `RUNNING` guard and safe result summaries.
 
 ## Database
-Latest migration: `migrations/0002_mercadolivre_oauth.sql` (remote applied)
+Latest migration: `migrations/0003_commerce_sync.sql` (local ready; remote not applied)
 
 ## Relevant Routes
 - `GET /api/health`
@@ -46,9 +49,11 @@ Latest migration: `migrations/0002_mercadolivre_oauth.sql` (remote applied)
 - `GET /api/integrations/mercadolivre/callback`
 - `GET /api/integrations/mercadolivre/status`
 - `POST /api/integrations/mercadolivre/disconnect`
+- `POST /api/integrations/mercadolivre/sync`
+- `GET /api/integrations/mercadolivre/sync/status`
 
 ## Tests
-24 PASS, 0 FAIL
+37 PASS, 0 FAIL
 Typecheck: PASS
 Build: PASS
 
@@ -80,6 +85,10 @@ Build: PASS
 - Access token encrypted at rest: PASS
 - Refresh token encrypted at rest: PASS
 - Production OWNER/session: PASS
+- Phase 3A local sync foundation: READY
+- Remote migration `0003_commerce_sync.sql`: PENDING AUTHORIZATION
+- Production deployment of Phase 3A: NOT DONE
+- Real product/order sync: NOT EXECUTED
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -91,4 +100,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Phase 3 — Mercado Livre Data Sync Foundation. Do not start this phase yet.
+Review and authorize remote application of `migrations/0003_commerce_sync.sql`; then deploy and test a real sync. Do not implement Claims, Returns, ReturnShield, IA, Queue, or Cron.

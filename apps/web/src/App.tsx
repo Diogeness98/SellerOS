@@ -4,6 +4,7 @@ type Session = { authenticated: boolean; user?: { id: string; email: string }; w
 type Integration = { connected: boolean; externalAccountId: string | null; lastSyncAt: string | null }
 type PriorityCase = { externalClaimId: string; externalOrderId: string | null; estimatedExposure: number | null; currencyId: string | null; amountKnown: boolean; deadlineAt: string | null; hoursToDeadline: number | null; riskScore: number; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'; hasReturn: boolean; overdue: boolean; title: string | null; problem: string | null; reasons: string[] }
 type Dashboard = { moneyAtRisk: { currency: 'BRL'; estimatedAmount: number; pricedCases: number; unpricedCases: number }; openCases: number; criticalCases: number; highCases: number; overdueCases: number; dueToday: number; casesWithReturns: number; priorityCases: PriorityCase[] }
+type EvidencePack = { externalClaimId: string; claim: { status: string | null; type: string | null; stage: string | null; reasonId: string | null; title: string | null; problem: string | null; dueDate: string | null; createdAt: string | null; updatedAt: string | null }; order: { externalOrderId: string; status: string | null; currencyId: string | null; totalAmount: number | null; paidAmount: number | null; createdAt: string | null } | null; items: Array<{ externalItemId: string; title: string | null; sellerSku: string | null; quantity: number; unitPrice: number | null; productStatus: string | null; categoryId: string | null }>; returns: Array<{ externalReturnId: string; status: string | null; subtype: string | null; refundAt: string | null; closedAt: string | null }>; messages: Array<{ senderRole: string | null; receiverRole: string | null; messageText: string | null; messageDate: string | null }>; assets: Array<{ externalId: string; originalFilename: string | null; mimeType: string | null; sizeBytes: number | null; createdAt: string | null }>; timeline: Array<{ type: string; at: string; source: string; summary: string }>; missingEvidence: string[] }
 export type SyncResult = { jobId: string; status: 'SUCCESS' | 'PARTIAL' | 'FAILED'; products: number; orders: number; claims: number; returns: number; created: number; updated: number; failed: number; startedAt: string; finishedAt: string }
 
 const reasonLabels: Record<string, string> = {
@@ -47,6 +48,9 @@ export function App() {
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null)
   const [syncError, setSyncError] = useState('')
   const [syncOutcome, setSyncOutcome] = useState('')
+  const [evidencePack, setEvidencePack] = useState<EvidencePack | null>(null)
+  const [evidenceError, setEvidenceError] = useState('')
+  const [evidenceSyncing, setEvidenceSyncing] = useState(false)
 
   async function restoreSession() {
     const response = await fetch(sessionEndpoint, { credentials: 'include' })
@@ -118,6 +122,8 @@ export function App() {
     setSyncError('')
     setSyncOutcome('')
     setDashboard(null)
+    setEvidencePack(null)
+    setEvidenceError('')
   }
 
   async function syncMercadoLivre() {
@@ -136,6 +142,33 @@ export function App() {
       setSyncError('Não foi possível concluir a sincronização.')
     } finally {
       setSyncing(false)
+    }
+  }
+
+  async function openEvidence(externalClaimId: string) {
+    setEvidenceError('')
+    setEvidencePack(null)
+    try {
+      const response = await fetch(`/api/returnshield/cases/${encodeURIComponent(externalClaimId)}/evidence-pack`, { credentials: 'include' })
+      if (!response.ok) throw new Error('Evidence pack failed')
+      setEvidencePack(await response.json() as EvidencePack)
+    } catch {
+      setEvidenceError('Não foi possível carregar as evidências deste caso.')
+    }
+  }
+
+  async function syncEvidence() {
+    if (!evidencePack) return
+    setEvidenceSyncing(true)
+    setEvidenceError('')
+    try {
+      const response = await fetch(`/api/returnshield/cases/${encodeURIComponent(evidencePack.externalClaimId)}/evidence/sync`, { method: 'POST', credentials: 'include' })
+      if (!response.ok) throw new Error('Evidence sync failed')
+      await openEvidence(evidencePack.externalClaimId)
+    } catch {
+      setEvidenceError('Não foi possível atualizar as evidências.')
+    } finally {
+      setEvidenceSyncing(false)
     }
   }
 
@@ -185,8 +218,22 @@ export function App() {
                 <p>Risk Score: {riskCase.riskScore}</p>
                 <p>{riskCase.overdue ? 'Prazo vencido' : riskCase.deadlineAt ? `Prazo: ${new Date(riskCase.deadlineAt).toLocaleString()}` : 'Prazo não informado'}</p>
                 {riskCase.reasons.length > 0 && <p className="reasons">{riskCase.reasons.map((reason) => reasonLabels[reason] ?? reason).join(' · ')}</p>}
+                <button className="secondary evidence-button" onClick={() => void openEvidence(riskCase.externalClaimId)}>Ver evidências</button>
               </article>
             ))}</div>}
+            {evidenceError && <p className="error" role="alert">{evidenceError}</p>}
+            {evidencePack && <section className="evidence-pack" aria-labelledby="evidence-title">
+              <div className="priority-header"><h2 id="evidence-title">Evidências #{evidencePack.externalClaimId}</h2><button onClick={() => void syncEvidence()} disabled={evidenceSyncing}>{evidenceSyncing ? 'Atualizando…' : 'Atualizar evidências'}</button></div>
+              <div className="evidence-grid">
+                <article><h3>Resumo do caso</h3><p>{evidencePack.claim.title ?? 'Sem título'}</p><p>Status: {evidencePack.claim.status ?? 'Não informado'}</p><p>Prazo: {evidencePack.claim.dueDate ? new Date(evidencePack.claim.dueDate).toLocaleString() : 'Não informado'}</p></article>
+                <article><h3>Pedido</h3>{evidencePack.order ? <><p>#{evidencePack.order.externalOrderId}</p><p>{evidencePack.order.paidAmount ?? evidencePack.order.totalAmount ?? 'Valor não informado'}</p></> : <p>Pedido não vinculado.</p>}</article>
+                <article><h3>Itens</h3>{evidencePack.items.length ? evidencePack.items.map((item) => <p key={item.externalItemId}>{item.quantity} × {item.title ?? item.externalItemId}</p>) : <p>Nenhum item disponível.</p>}</article>
+                <article><h3>Timeline</h3>{evidencePack.timeline.length ? evidencePack.timeline.map((event) => <p key={`${event.type}-${event.at}`}>{event.summary} — {new Date(event.at).toLocaleString()}</p>) : <p>Nenhum evento disponível.</p>}</article>
+                <article><h3>Mensagens</h3>{evidencePack.messages.length ? evidencePack.messages.map((message, index) => <p key={`${message.messageDate}-${index}`}>{message.messageText ?? 'Mensagem sem texto'}</p>) : <p>Nenhuma mensagem sincronizada.</p>}</article>
+                <article><h3>Anexos</h3>{evidencePack.assets.length ? evidencePack.assets.map((asset) => <p key={asset.externalId}>{asset.originalFilename ?? asset.externalId} <a href={`/api/returnshield/cases/${encodeURIComponent(evidencePack.externalClaimId)}/assets/${encodeURIComponent(asset.externalId)}/download`}>Baixar</a></p>) : <p>Nenhum anexo sincronizado.</p>}</article>
+                <article><h3>Informações ausentes</h3>{evidencePack.missingEvidence.length ? evidencePack.missingEvidence.map((item) => <p key={item}>{item}</p>) : <p>Nenhuma informação ausente identificada.</p>}</article>
+              </div>
+            </section>}
           </>
         ) : <p className="loading">Carregando ReturnShield…</p>}
       </section>

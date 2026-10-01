@@ -1,10 +1,10 @@
 # SellerOS Project State
 
 ## Current Phase
-Phase 5 — ReturnShield Core
+Phase 6A — Evidence Pack Foundation
 
 ## Status
-PASS — PRODUCTION_VERIFIED / ZERO_DATA_ACCOUNT
+LOCAL READY / REMOTE MIGRATION PENDING
 
 ## Stack
 React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
@@ -40,9 +40,11 @@ React, TypeScript, Vite, Cloudflare Workers, Cloudflare D1
 - ReturnShield Core with deterministic Money at Risk and Risk Score V1 calculated on demand from claims and orders.
 - ReturnShield dashboard API scoped exclusively to the signed session workspace, with prioritized, PII-minimized cases.
 - ReturnShield dashboard UI with zero-data state and Mercado Livre integration card preserved.
+- Evidence Pack Foundation with on-demand, read-only Mercado Livre message and attachment-metadata sync.
+- Secure authenticated attachment proxy, deterministic timeline, and Missing Evidence V1 rules.
 
 ## Database
-Latest migration: `migrations/0004_claims_returns.sql` (remote applied)
+Latest migration: `migrations/0005_evidence_pack.sql` (local ready; remote pending)
 
 ## Relevant Routes
 - `GET /api/health`
@@ -57,9 +59,13 @@ Latest migration: `migrations/0004_claims_returns.sql` (remote applied)
 - `POST /api/integrations/mercadolivre/disconnect`
 - `POST /api/integrations/mercadolivre/sync`
 - `GET /api/integrations/mercadolivre/sync/status`
+- `GET /api/returnshield/dashboard`
+- `GET /api/returnshield/cases/:externalClaimId/evidence-pack`
+- `POST /api/returnshield/cases/:externalClaimId/evidence/sync`
+- `GET /api/returnshield/cases/:externalClaimId/assets/:assetId/download`
 
 ## Tests
-42 PASS, 0 FAIL
+57 PASS, 0 FAIL
 Typecheck: PASS
 Build: PASS
 
@@ -119,6 +125,13 @@ Build: PASS
 - AI dependency: NONE
 - Production data: ZERO DATA ACCOUNT
 - Real risk-case calculation: PENDING REAL CLAIM DATA
+- EvidencePackService: READY
+- Claim messages read sync: READY
+- Attachment metadata: READY
+- Secure attachment proxy: READY
+- Deterministic timeline: READY
+- Missing Evidence V1: READY
+- External write actions: NONE
 
 ## Deployment Readiness
 Cloudflare deployment configuration: READY
@@ -130,4 +143,4 @@ Production smoke test after Phase 2B.2 deploy: PASS
 Production smoke test after Phase 2B.3 deploy: PASS
 
 ## Next Exact Task
-Phase 6 — Evidence Pack.
+Phase 6B — migration + deploy + live zero-data verification.

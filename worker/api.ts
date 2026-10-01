@@ -5,6 +5,7 @@ import { encryptToken } from './crypto'
 import { exchangeAuthorizationCode, fetchMercadoLivreUser, MercadoLivreApiError, MERCADOLIVRE_AUTHORIZATION_URL } from './mercadolivre'
 import { MercadoLivreSyncService, SyncError } from './sync'
 import { getReturnShieldDashboard } from './returnshield'
+import { downloadEvidenceAsset, EvidenceError, EvidenceSyncService, getEvidencePack } from './evidence'
 import type { Env } from './types'
 
 type UserRow = { id: string; email: string; password_hash: string }
@@ -29,6 +30,8 @@ const mercadoLivreConfig = (env: Env) => ({
   redirectUri: env.MERCADOLIVRE_REDIRECT_URI,
   tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY,
 })
+
+const evidenceInput = (env: Env) => ({ db: env.DB, clientId: env.MERCADOLIVRE_CLIENT_ID, clientSecret: env.MERCADOLIVRE_CLIENT_SECRET, tokenEncryptionKey: env.TOKEN_ENCRYPTION_KEY })
 
 async function readSession(request: Request, secret: string): Promise<Session | null> {
   const raw = request.headers.get('cookie')?.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`))?.[1]
@@ -134,6 +137,44 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const session = await readSession(request, env.SESSION_SECRET)
     if (!session) return error('FORBIDDEN', 'Authentication required', 403)
     return json(await getReturnShieldDashboard(env.DB, session.workspaceId))
+  }
+
+  const evidencePackMatch = url.pathname.match(/^\/api\/returnshield\/cases\/([^/]+)\/evidence-pack$/)
+  if (request.method === 'GET' && evidencePackMatch) {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    try {
+      return json(await getEvidencePack(env.DB, session.workspaceId, decodeURIComponent(evidencePackMatch[1])))
+    } catch (cause) {
+      if (cause instanceof EvidenceError && cause.code === 'CLAIM_NOT_FOUND') return error('NOT_FOUND', 'Claim not found', 404)
+      return error('EVIDENCE_PACK_FAILED', 'Evidence pack could not be loaded', 502)
+    }
+  }
+
+  const evidenceSyncMatch = url.pathname.match(/^\/api\/returnshield\/cases\/([^/]+)\/evidence\/sync$/)
+  if (request.method === 'POST' && evidenceSyncMatch) {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    try {
+      return json(await new EvidenceSyncService(evidenceInput(env)).sync(session.workspaceId, decodeURIComponent(evidenceSyncMatch[1])))
+    } catch (cause) {
+      if (cause instanceof EvidenceError && cause.code === 'CLAIM_NOT_FOUND') return error('NOT_FOUND', 'Claim not found', 404)
+      if (cause instanceof EvidenceError && cause.code === 'INTEGRATION_NOT_CONNECTED') return error('INTEGRATION_NOT_CONNECTED', 'Mercado Livre is not connected', 409)
+      if (cause instanceof EvidenceError && cause.code === 'CONFIGURATION_ERROR') return error('CONFIGURATION_ERROR', 'Evidence sync is not configured', 503)
+      return error('EVIDENCE_SYNC_FAILED', 'Evidence sync could not be completed', 502)
+    }
+  }
+
+  const evidenceDownloadMatch = url.pathname.match(/^\/api\/returnshield\/cases\/([^/]+)\/assets\/([^/]+)\/download$/)
+  if (request.method === 'GET' && evidenceDownloadMatch) {
+    const session = await readSession(request, env.SESSION_SECRET)
+    if (!session) return error('FORBIDDEN', 'Authentication required', 403)
+    try {
+      return await downloadEvidenceAsset(evidenceInput(env), session.workspaceId, decodeURIComponent(evidenceDownloadMatch[1]), decodeURIComponent(evidenceDownloadMatch[2]))
+    } catch (cause) {
+      if (cause instanceof EvidenceError && (cause.code === 'CLAIM_NOT_FOUND' || cause.code === 'ASSET_NOT_FOUND')) return error('NOT_FOUND', 'Asset not found', 404)
+      return error('ASSET_DOWNLOAD_FAILED', 'Asset could not be downloaded', 502)
+    }
   }
 
   if (request.method === 'POST' && url.pathname === '/api/integrations/mercadolivre/sync') {
